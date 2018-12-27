@@ -133,129 +133,139 @@ function getSetaSuccessRate(data) {
 
 window.onload = async function() {
 	console.log('loaded');
+};
 
-	/* Insert dropdown menu */
+/* Get success rate for visible pushes */
 
-	var navbarElement = document.getElementById("th-global-navbar-top");
-	var spanElement = navbarElement.querySelector(".navbar-right");
+// Get repo
+var currentURL = new URL(window.location.href)
+var repo = currentURL.searchParams.get('repo')
+repo = splitRepo(window.location.href)
 
-	spanElement.insertAdjacentHTML("afterbegin",
-		`
-		<span class='dropdown' style='color:white'>
-			<button id='successrateentry' type='button' title='Scheduling Success Rates'
-			 class='btn btn-view-nav nav-menu-btn'>
-			0 % (Calculating)
-			</button>
-		<span>
-		<span class='dropdown'>
-			<button id='successrates' type='button' title='Scheduling Success Rates'
-			 data-toggle='dropdown' class='btn btn-view-nav nav-menu-btn dropdown-toggle'>
-			Scheduling
-			</button>
-		</span>`
-	);
+// Get first and last revision
+//
+// Revision entries are dynamically added to treeherder
+// page so we have to check until they exist, then proceed with
+// processing.
+var navbarElement = document.getElementById("th-global-navbar-top");
+var revnodes = document.querySelectorAll('span .revision-list');
+var spanElement = null;
 
-	/* Get success rate for visible pushes */
+var checkExist = setInterval(function() {
+	revnodes = document.querySelectorAll('span .revision-list')
+	if (revnodes.length >= 1 && navbarElement) {
+		console.log("Exists!");
+		console.log(revnodes)
+		clearInterval(checkExist);
 
-	// Get repo
-	var currentURL = new URL(window.location.href)
-	var repo = currentURL.searchParams.get('repo')
-	repo = splitRepo(window.location.href)
+		// Insert scheduling rate dropdown
+		// TODO: List options.
+		var inserted_elements = document.getElementById("successrateentry");
+		if (!inserted_elements) {
+			spanElement = navbarElement.querySelector(".navbar-right");
 
-	// Get first and last revision
-	//
-	// Revision entries are dynamically added to treeherder
-	// page so we have to check until they exist, then proceed with
-	// processing.
-	var revnodes = document.querySelectorAll('span .revision-list')
-	var checkExist = await setInterval(function() {
-		revnodes = document.querySelectorAll('span .revision-list')
-		if (revnodes.length >= 1) {
-			console.log("Exists!");
-			console.log(revnodes)
-			clearInterval(checkExist);
+			spanElement.insertAdjacentHTML("afterbegin",
+				`
+				<span class='dropdown' style='color:white'>
+					<button id='successrateentry' type='button' title='Scheduling Success Rates'
+					 class='btn btn-view-nav nav-menu-btn'>
+					0 % (Calculating)
+					</button>
+				<span>
+				<span class='dropdown'>
+					<button id='successrates' type='button' title='Scheduling Success Rates'
+					 data-toggle='dropdown' class='btn btn-view-nav nav-menu-btn dropdown-toggle'>
+					Scheduling
+					</button>
+					<ul id="success-dropdown" class="dropdown-menu nav-dropdown-menu-right container" role="menu" aria-labelledby="infraLabel">
+						<li>SETA Success</li>
+						<li>Coverage Success</li>
+					</ul>
+				</span>`
+			);
+
+			// Calculate success rate for SETA and display
 			completeSetup(revnodes)
-		} else {
-			console.log("Not found...")
 		}
-	}, 100)
+	} else {
+		console.log("Not found...")
+	}
+}, 100)
 
-	async function completeSetup(revnodes) {
-		// Query hg.mozilla.org for dates of these revisions
-		var to_date_cset = revnodes[0].querySelector('.revision-holder').textContent.trim()
-		var from_date_cset = revnodes[revnodes.length-1].querySelector('.revision-holder').textContent.trim()
+async function completeSetup(revnodes) {
+	// Query hg.mozilla.org for dates of these revisions
+	var to_date_cset = revnodes[0].querySelector('.revision-holder').textContent.trim()
+	var from_date_cset = revnodes[revnodes.length-1].querySelector('.revision-holder').textContent.trim()
 
-		var repoEntry = repo
-		if (repo in branchToHgBranch) {
-			repoEntry = branchToHgBranch[repo]
-		}
-
-		var url = hgmourl + repoEntry + "/json-rev/" + from_date_cset
-		var from_date_cset_info = await fetch(url)
-		.then(res => res.json())
-		.then((out) => {
-			console.log('Checkout this JSON! ', out);
-		    return out;
-		})
-		.catch(err => { throw err });
-
-		var url = hgmourl + repoEntry + "/json-rev/" + to_date_cset
-		var to_date_cset_info = await fetch(url)
-		.then(res => res.json())
-		.then((out) => {
-			console.log('Checkout this JSON! ', out);
-		    return out;
-		})
-		.catch(err => { throw err });
-
-		var from_date = timeConverter(from_date_cset_info['pushdate'][0])
-		var to_date = timeConverter(to_date_cset_info['pushdate'][0])
-
-		console.log("From date: ", from_date)
-		console.log("To date: ", to_date)
-
-		// Query active data for success rate data to process
-		var otherparams = {
-			headers: {
-				"content-type": "application/json"
-			},
-			body: JSON.stringify(fixed_by_commit_query),
-			method: "POST"
-		}
-
-		var fixed_by_commit_query = {
-			"from":"treeherder",
-			"select":[
-				"build.date",
-				"job.type.name",
-				"action.request_time",
-				"build.revision12",
-				"failure.notes.text"
-			],
-			"where":{"and":[
-				{"regexp":{"repo.branch.name":".*" + repo + ".*"}},
-				{"lte":{"repo.push.date":{"date":to_date}}},
-				{"gte":{"repo.push.date":{"date":from_date}}},
-				{"eq":{"failure.classification":"fixed by commit"}}
-			]},
-			"limit":50000
-		}
-		console.log(JSON.stringify(fixed_by_commit_query))
-
-		var otherparams = {
-			headers: {
-				"content-type": "application/json"
-			},
-			body: JSON.stringify(fixed_by_commit_query),
-			method: "POST"
-		}
-
-		// Get the response and process it
-		console.log("Waiting for response...")
-		fetch(activedataurl, otherparams)
-		.then(data=>{return data.json()})
-		.then(response=>{console.log(JSON.stringify(response['data'])); getSetaSuccessRate(response['data'])})
-		.catch(error => console.error('Error:', error));
+	var repoEntry = repo
+	if (repo in branchToHgBranch) {
+		repoEntry = branchToHgBranch[repo]
 	}
 
-};
+	var url = hgmourl + repoEntry + "/json-rev/" + from_date_cset
+	var from_date_cset_info = await fetch(url)
+	.then(res => res.json())
+	.then((out) => {
+		console.log('Checkout this JSON! ', out);
+	    return out;
+	})
+	.catch(err => { throw err });
+
+	var url = hgmourl + repoEntry + "/json-rev/" + to_date_cset
+	var to_date_cset_info = await fetch(url)
+	.then(res => res.json())
+	.then((out) => {
+		console.log('Checkout this JSON! ', out);
+	    return out;
+	})
+	.catch(err => { throw err });
+
+	var from_date = timeConverter(from_date_cset_info['pushdate'][0])
+	var to_date = timeConverter(to_date_cset_info['pushdate'][0])
+
+	console.log("From date: ", from_date)
+	console.log("To date: ", to_date)
+
+	// Query active data for success rate data to process
+	var otherparams = {
+		headers: {
+			"content-type": "application/json"
+		},
+		body: JSON.stringify(fixed_by_commit_query),
+		method: "POST"
+	}
+
+	var fixed_by_commit_query = {
+		"from":"treeherder",
+		"select":[
+			"build.date",
+			"job.type.name",
+			"action.request_time",
+			"build.revision12",
+			"failure.notes.text"
+		],
+		"where":{"and":[
+			{"regexp":{"repo.branch.name":".*" + repo + ".*"}},
+			{"lte":{"repo.push.date":{"date":to_date}}},
+			{"gte":{"repo.push.date":{"date":from_date}}},
+			{"eq":{"failure.classification":"fixed by commit"}}
+		]},
+		"limit":50000
+	}
+	console.log(JSON.stringify(fixed_by_commit_query))
+
+	var otherparams = {
+		headers: {
+			"content-type": "application/json"
+		},
+		body: JSON.stringify(fixed_by_commit_query),
+		method: "POST"
+	}
+
+	// Get the response and process it
+	console.log("Waiting for response...")
+	fetch(activedataurl, otherparams)
+	.then(data=>{return data.json()})
+	.then(response=>{console.log(JSON.stringify(response['data'])); getSetaSuccessRate(response['data'])})
+	.catch(error => console.error('Error:', error));
+}
