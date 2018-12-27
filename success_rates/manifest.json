@@ -1,0 +1,22 @@
+{
+
+  "manifest_version": 2,
+  "name": "Scheduling Success Rates",
+  "version": "1.0",
+
+  "description": "Adds a tab to treeherder to monitor changes in scheduling failures.",
+
+  "content_scripts": [
+    {
+      "matches": ["*://treeherder.mozilla.org/*"],
+      "js": ["scheduling_changes.js"]
+    }
+  ],
+
+  "permissions": [
+    "*://treeherder.mozilla.org/*",
+    "*://activedata.allizom.org/query*",
+    "*://hg.mozilla.org/*"
+  ]
+
+}
