@@ -150,6 +150,7 @@ repo = splitRepo(window.location.href)
 var navbarElement = document.getElementById("th-global-navbar-top");
 var revnodes = document.querySelectorAll('span .revision-list');
 var spanElement = null;
+var currentrevnodes = 0;
 
 var checkExist = setInterval(function() {
 	revnodes = document.querySelectorAll('span .revision-list')
@@ -160,6 +161,7 @@ var checkExist = setInterval(function() {
 
 		// Insert scheduling rate dropdown
 		// TODO: List options.
+		currentrevnodes = revnodes.length
 		var inserted_elements = document.getElementById("successrateentry");
 		if (!inserted_elements) {
 			spanElement = navbarElement.querySelector(".navbar-right");
@@ -185,14 +187,26 @@ var checkExist = setInterval(function() {
 			);
 
 			// Calculate success rate for SETA and display
-			completeSetup(revnodes)
+			completeSetaCalculation(revnodes)
 		}
 	} else {
 		console.log("Not found...")
 	}
 }, 100)
 
-async function completeSetup(revnodes) {
+var checkForNewRevs = setInterval(function() {
+	var inserted_element = document.getElementById("successrateentry");
+	if (inserted_element) {
+		revnodes = document.querySelectorAll('span .revision-list')
+		if (revnodes.length != currentrevnodes) {
+			currentrevnodes = revnodes.length
+			inserted_element.textContent = "0 % (Calculating)"
+			completeSetaCalculation(revnodes)
+		}
+	}
+}, 1000)
+
+async function completeSetaCalculation(revnodes) {
 	// Query hg.mozilla.org for dates of these revisions
 	var to_date_cset = revnodes[0].querySelector('.revision-holder').textContent.trim()
 	var from_date_cset = revnodes[revnodes.length-1].querySelector('.revision-holder').textContent.trim()
