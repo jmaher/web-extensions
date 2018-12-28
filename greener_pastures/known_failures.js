@@ -5,6 +5,8 @@
     failures are found in the known failure list.
 */
 
+var completed = false;
+
 // Hack to take a job name and output a platform and config
 // mild sanitization goes on here
 //
@@ -62,13 +64,12 @@ window.onload = async function() {
 
 var checkExist = setInterval(function() {
 	revnodes = document.querySelectorAll('span .revision-list')
-	if (revnodes.length >= 1) {
-		// Calculate success rate for SETA and display
+	if (revnodes.length >= 1 && !completed) {
 		analyzeFailedTests();
-	} else {
+	} else if (!completed) {
 		console.log("Not found...")
 	}
-}, 100);
+}, 1000);
 
 async function analyzeFailedTests() {
     await fetch(browser.runtime.getURL("failures.json"))
@@ -76,8 +77,13 @@ async function analyzeFailedTests() {
         return response.json();
       })
       .then(function(knownFailures) {
-        var jobs = document.querySelectorAll('.btn-orange-classified');
+        // TODO: account for already classified failures: .btn-orange-classified 
+        var jobs = document.querySelectorAll('.btn-orange');
+        console.log("greener pastures has loaded the known failures and will analyze " + jobs.length + " failed jobs");
         jobs.forEach(function(job) {
+          if (job == jobs[jobs.length -1])
+              completed = true;
+
           let attrs = job.attributes;
           let jobid = 0;
           let title = '';
@@ -89,9 +95,12 @@ async function analyzeFailedTests() {
           }
           if (jobid == 0 || title == '')
             return;
+//          console.log(title + " : " + jobid);
 
+          // TODO: get the repo
           // https://treeherder.mozilla.org/api/project/mozilla-inbound/jobs/219013973/bug_suggestions/
-          fetch('https://treeherder.mozilla.org/api/project/mozilla-inbound/jobs/' + jobid + '/bug_suggestions/')
+          url = 'https://treeherder.mozilla.org/api/project/try/jobs/' + jobid + '/bug_suggestions/';
+          fetch(url)
             .then(function(response) {
                 response.json().then(function(failJson) {
                   failJson.forEach(function(failure) {
@@ -116,6 +125,8 @@ async function analyzeFailedTests() {
                         typeof knownFailures[testname][platform] !== 'undefined' &&
                         typeof knownFailures[testname][platform][config] !== 'undefined') {
                       job.className = job.className.replace(/btn-orange-classified/, "btn-green");
+                      job.className = job.className.replace(/btn-orange/, "btn-green");
+//                      console.log("OK: " + platform + ", " + config + ": " + testname);
                       //TODO: keep track of names for toggling
                     } else {
                       console.log("BAD: '" + testname + "'");
