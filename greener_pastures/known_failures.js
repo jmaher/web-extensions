@@ -5,7 +5,24 @@
     failures are found in the known failure list.
 */
 
+
+/* we need to branch/repo because our query for bug suggestions needs
+   the repo
+*/
+function splitRepo(href) {
+	var urls = href;
+	var myurls = urls.split("?repo=");
+	var mylasturls = myurls[1];
+	var mynexturls = mylasturls.split("&");
+	var url = mynexturls[0];
+	return url
+};
+
+
 var completed = false;
+let oranges_toggled = [];
+var classified_toggled = [];
+var missed = [];
 
 // Hack to take a job name and output a platform and config
 // mild sanitization goes on here
@@ -62,13 +79,57 @@ window.onload = async function() {
 	console.log('loaded');
 };
 
+
+function toggle_gp() {
+    console.log("inside toggle_gp: " + oranges_toggled + " : " + classified_toggled + " : " + missed);
+    oranges_toggled.forEach(function(jid) {
+        console.log(" .." + jid);
+        var job = document.querySelector(jid);
+        job.className = job.className.replace(/btn-green/, "btn-orange");
+    })
+
+    classified_toggled.forEach(function(jid) {
+        console.log(" .." + jid);
+        var job = document.querySelector(jid);
+        job.className = job.className.replace(/btn-green/, "btn-orange-classified");
+    })
+}
+
 var checkExist = setInterval(function() {
-	revnodes = document.querySelectorAll('span .revision-list')
-	if (revnodes.length >= 1 && !completed) {
-		analyzeFailedTests();
+    var navbarElement = document.getElementById("th-global-navbar-top");
+	var revnodes = document.querySelectorAll('span .revision-list')
+	var inserted_elements_gp = document.getElementById("toggle_gp");
+	if (revnodes.length >= 1 && !inserted_elements_gp && !completed) {
+		if (!inserted_elements_gp) {
+			// Set up the elements
+			spanElement = navbarElement.querySelector(".navbar-right");
+			spanElement.insertAdjacentHTML("afterbegin",
+				`
+				<span class='dropdown' style='color:white'>
+					<button id='toggle_gp' type='button' title='Toggle known intermittents'
+					 class='btn btn-view-nav nav-menu-btn'>
+					0 Known Intermittents (Analyzing)
+					</button>
+				</span>`
+			);
+
+			// Save original display settings
+			inserted_elements_gp = document.getElementById("toggle_gp");
+
+			// Add onclick functions for success rate initiating
+			button_toggle = document.getElementById("toggle_gp");
+			button_toggle.addEventListener('click', function() {
+				toggle_gp();
+			});
+            analyzeFailedTests();
+        }
 	} else if (!completed) {
-		console.log("Not found...")
-	}
+        analyzeFailedTests();
+	} else {
+        var status = document.getElementById('toggle_gp')
+        status.textContent = status.textContent.replace(/\ \(Analyzing\)/, '');
+		console.log("done...");
+    }
 }, 1000);
 
 async function analyzeFailedTests() {
@@ -77,8 +138,10 @@ async function analyzeFailedTests() {
         return response.json();
       })
       .then(function(knownFailures) {
-        // TODO: account for already classified failures: .btn-orange-classified 
-        var jobs = document.querySelectorAll('.btn-orange');
+        var jobs = document.querySelectorAll('.btn-orange, .btn-orange-classified');
+        var oranges_toggled = [];
+        var classified_toggled = [];
+        var missed = [];
         console.log("greener pastures has loaded the known failures and will analyze " + jobs.length + " failed jobs");
         jobs.forEach(function(job) {
           if (job == jobs[jobs.length -1])
@@ -95,11 +158,14 @@ async function analyzeFailedTests() {
           }
           if (jobid == 0 || title == '')
             return;
-//          console.log(title + " : " + jobid);
 
-          // TODO: get the repo
-          // https://treeherder.mozilla.org/api/project/mozilla-inbound/jobs/219013973/bug_suggestions/
-          url = 'https://treeherder.mozilla.org/api/project/try/jobs/' + jobid + '/bug_suggestions/';
+          // Get repo
+          var currentURL = new URL(window.location.href)
+          var repo = currentURL.searchParams.get('repo')
+          repo = splitRepo(window.location.href)
+
+          url = 'https://treeherder.mozilla.org/api/project/' + repo;
+          url += '/jobs/' + jobid + '/bug_suggestions/';
           fetch(url)
             .then(function(response) {
                 response.json().then(function(failJson) {
@@ -124,14 +190,23 @@ async function analyzeFailedTests() {
                     if (typeof knownFailures[testname] !== 'undefined' &&
                         typeof knownFailures[testname][platform] !== 'undefined' &&
                         typeof knownFailures[testname][platform][config] !== 'undefined') {
-                      job.className = job.className.replace(/btn-orange-classified/, "btn-green");
-                      job.className = job.className.replace(/btn-orange/, "btn-green");
+                      if (job.className.indexOf('btn-orange-classified') >= 0) {
+                        job.className = job.className.replace(/btn-orange-classified/, "btn-green");
+                        classified_toggled.push(jobid);
+                      } else if (job.className.indexOf('btn-orange') >= 0) {
+                        job.className = job.className.replace(/btn-orange/, "btn-green");
+                        oranges_toggled.push(jobid);
+                      }
+
+                        var status = document.getElementById('toggle_gp')
+                        status.textContent = oranges_toggled.length + classified_toggled.length + " Known Intermittents (Analyzing)";
+
 //                      console.log("OK: " + platform + ", " + config + ": " + testname);
-                      //TODO: keep track of names for toggling
                     } else {
                       console.log("BAD: '" + testname + "'");
+                      missed.push(jobid);
                     }
-                  })
+                  });
                 })
             });
         })
