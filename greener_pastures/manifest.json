@@ -1,0 +1,20 @@
+{
+
+  "manifest_version": 2,
+  "name": "Take recent intermittents and mark them as green",
+  "version": "1.0",
+
+  "description": "Adds a tab to treeherder (future) to toggle between default view and hiding intermittents",
+
+  "content_scripts": [
+    {
+      "matches": ["*://treeherder.mozilla.org/*"],
+      "js": ["known_failures.js"]
+    }
+  ],
+
+  "permissions": [
+    "*://treeherder.mozilla.org/*"
+  ]
+
+}
