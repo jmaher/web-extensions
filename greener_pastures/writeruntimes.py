@@ -28,9 +28,6 @@ def query_activedata_configs():
 	],
 	"limit":200000,
 	"where":{"and":[{"gt":{"run.timestamp":%s}},
-      {"in":{"repo.branch.name":["mozilla-inbound","autoland"]}},
-      {"neq":{"build.type":"pgo"}},
-      {"neq":{"build.type":"ccov"}},
       {"in":{"repo.branch.name":["mozilla-inbound", "autoland"]}}
     ]}
  }
@@ -86,8 +83,6 @@ def query_activedata(e10s, platforms=None):
 		{"in":{"repo.branch.name":["mozilla-inbound","autoland"]}},
         {"eq":{"run.machine.platform":"%s"}},
         {"eq":{"result.ok":"F"}},
-        {"neq":{"build.type":"pgo"}},
-        {"neq":{"build.type":"ccov"}},
         {%s},
         {"gt":{"run.timestamp":%s}}
     ]}

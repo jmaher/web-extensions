@@ -82,13 +82,13 @@ window.onload = async function() {
 
 function toggle_gp() {
     console.log("inside toggle_gp: " + oranges_toggled + " : " + classified_toggled + " : " + missed);
-    oranges_toggled.forEach(function(jid) {
+    oranges_toggled.forEach(function(jid, pct) {
         console.log(" .." + jid);
         var job = document.querySelector(jid);
         job.className = job.className.replace(/btn-green/, "btn-orange");
     })
 
-    classified_toggled.forEach(function(jid) {
+    classified_toggled.forEach(function(jid, pct) {
         console.log(" .." + jid);
         var job = document.querySelector(jid);
         job.className = job.className.replace(/btn-green/, "btn-orange-classified");
@@ -139,9 +139,9 @@ async function analyzeFailedTests() {
       })
       .then(function(knownFailures) {
         var jobs = document.querySelectorAll('.btn-orange, .btn-orange-classified');
-        var oranges_toggled = [];
-        var classified_toggled = [];
-        var missed = [];
+        let oranges_toggled = [];
+        let classified_toggled = [];
+        let missed = [];
         console.log("greener pastures has loaded the known failures and will analyze " + jobs.length + " failed jobs");
         jobs.forEach(function(job) {
           if (job == jobs[jobs.length -1])
@@ -187,25 +187,30 @@ async function analyzeFailedTests() {
                     let platconf = parseJobname(title);
                     let platform = platconf[0];
                     let config = platconf[1];
-                    if (typeof knownFailures[testname] !== 'undefined' &&
-                        typeof knownFailures[testname][platform] !== 'undefined' &&
-                        typeof knownFailures[testname][platform][config] !== 'undefined') {
-                      if (job.className.indexOf('btn-orange-classified') >= 0) {
-                        job.className = job.className.replace(/btn-orange-classified/, "btn-green");
-                        classified_toggled.push(jobid);
-                      } else if (job.className.indexOf('btn-orange') >= 0) {
-                        job.className = job.className.replace(/btn-orange/, "btn-green");
-                        oranges_toggled.push(jobid);
-                      }
-
-                        var status = document.getElementById('toggle_gp')
-                        status.textContent = oranges_toggled.length + classified_toggled.length + " Known Intermittents (Analyzing)";
-
-//                      console.log("OK: " + platform + ", " + config + ": " + testname);
-                    } else {
-                      console.log("BAD: '" + testname + "'");
-                      missed.push(jobid);
+                    let pct = 0;
+                    if (typeof knownFailures[testname] !== 'undefined') {
+                        pct = 50;
+                        if (typeof knownFailures[testname][platform] !== 'undefined') {
+                            pct = 75;
+                            if (typeof knownFailures[testname][platform][config] !== 'undefined') {
+                                pct = 100;
+                            }
+                        }
                     }
+                    if (job.className.indexOf('btn-orange-classified') >= 0) {
+                        job.className = job.className.replace(/btn-orange-classified/, "btn-green");
+                        classified_toggled.push([jobid, pct]);
+                    } else if (job.className.indexOf('btn-orange') >= 0) {
+                        job.className = job.className.replace(/btn-orange/, "btn-green");
+                        oranges_toggled.push([jobid, pct]);
+                    } else {
+                        console.log("BAD: '" + testname + "'");
+                        missed.push(jobid);
+                    }
+                    // TODO: if there is >1 test failure across platforms/config, increase pct
+                    // TODO: if there are a collection of failures in the same dir or platform, increase pct
+                    var status = document.getElementById('toggle_gp')
+                    status.textContent = oranges_toggled.length + classified_toggled.length + " Known Intermittents (Analyzing)";                    
                   });
                 })
             });
