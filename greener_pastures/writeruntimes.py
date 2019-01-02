@@ -12,11 +12,11 @@ import requests
 here = os.path.abspath(os.path.dirname(__file__))
 
 ACTIVE_DATA_URL = "https://activedata.allizom.org/query"
-PERCENTILE = 0.5 # ignore the bottom PERCENTILE*100% of numbers
+TIME_WINDOW = 14
 
 def query_activedata_configs():
 
-    last_week = datetime.datetime.now() - datetime.timedelta(days=7)
+    last_week = datetime.datetime.now() - datetime.timedelta(days=TIME_WINDOW)
     last_week_timestamp = time.mktime(last_week.timetuple())
 
     query = """
@@ -28,7 +28,8 @@ def query_activedata_configs():
 	],
 	"limit":200000,
 	"where":{"and":[{"gt":{"run.timestamp":%s}},
-      {"in":{"repo.branch.name":["mozilla-inbound", "autoland"]}}
+                    {"neq":{"run.type":"ccov"}},
+      {"in":{"repo.branch.name":["mozilla-inbound", "autoland", "mozilla-central"]}}
     ]}
  }
 """ % (last_week_timestamp)
@@ -49,13 +50,16 @@ def query_activedata_configs():
             else:
                 c[1] = 'e10s'
 
+        if c[1] == None:
+            c[1] = ''
+        c[1] = c[1].replace('chunked', '')
         temp.append(c[1])
         if c[2] == None:
             temp = []
             continue
 
-        temp.append(c[2])
         if temp not in configs:
+            print temp
             configs.append(temp)
     return configs
 
@@ -66,7 +70,7 @@ def query_activedata(e10s, platforms=None):
 
     # TODO: skip talos, raptor, test-verify, etc.
 
-    last_week = datetime.datetime.now() - datetime.timedelta(days=7)
+    last_week = datetime.datetime.now() - datetime.timedelta(days=TIME_WINDOW)
     last_week_timestamp = time.mktime(last_week.timetuple())
 
     # NOTE: we could add build.type to groupby and do fewer queries
@@ -80,7 +84,7 @@ def query_activedata(e10s, platforms=None):
 		{"aggregate":"average","value":"result.duration"}
 	],
     "where":{"and":[
-		{"in":{"repo.branch.name":["mozilla-inbound","autoland"]}},
+		{"in":{"repo.branch.name":["mozilla-inbound","autoland","mozilla-central"]}},
         {"eq":{"run.machine.platform":"%s"}},
         {"eq":{"result.ok":"F"}},
         {%s},
@@ -106,6 +110,8 @@ def query_activedata(e10s, platforms=None):
             config = config.remove('opt')
         elif 'qr' in config:
             config = config.remove('qr')
+        elif 'ccov' in config:
+            config = config.remove('ccov')
 
         if config == [None] or not config or len(config) == 0:
             config = ['opt']
@@ -113,13 +119,16 @@ def query_activedata(e10s, platforms=None):
         if len(config) != 1:
             print("JMAHER: config too long: %s (%s)" % (config, type(config)))
         retVal.append([test, config[0], count, runtime])
-    print("returning %s items" % len(retVal))
+
     if len(retVal) == 0:
         print(query)
 
     return retVal
 
-def write_timecounts(data, platform, outdir=here):
+def write_timecounts(data, e10s, platform, outdir=here):
+    if e10s:
+        platform = "%s-e10s" % platform
+
     outfilename = os.path.join(outdir, "%s.failures.json" % (platform))
     if not os.path.exists(outdir):
         os.makedirs(outdir)
@@ -150,7 +159,7 @@ def cli(args=sys.argv[1:]):
             print("no data.....")
             continue
 
-        filenames.append(write_timecounts(data, config[0], outdir=args.outdir))
+        filenames.append(write_timecounts(data, e10s, config[0], outdir=args.outdir))
 
     failures = {}
     for filename in filenames:

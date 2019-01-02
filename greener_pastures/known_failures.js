@@ -59,12 +59,12 @@ function parseJobname(jobname) {
 function cleanTest(testname) {
     // TODO: split out remote and file paths, specifically in reftest
     if (testname.indexOf(' == ') != -1) {
-        left, right = testname.split(' == ')
-        if (left.indexOf('tests/layout/') != -1)
-            left = 'layout' + left.split('tests/layout')[1]
-        if (right.indexOf('tests/layout/') != -1)
-            right = 'layout' + right.split('tests/layout')[1]
-        return left + " == " + right;
+        let parts = testname.split(' == ')
+        if (parts[0].indexOf('tests/layout/') != -1)
+            parts[0] = 'layout' + parts[0].split('tests/layout')[1]
+        if (parts[1].indexOf('tests/layout/') != -1)
+            parts[1] = 'layout' + parts[1].split('tests/layout')[1]
+        return parts[0] + " == " + parts[1];
     }
 
     // http://localhost:50462/1545303666006/4/41276-1.html
@@ -81,15 +81,12 @@ window.onload = async function() {
 
 
 function toggle_gp() {
-    console.log("inside toggle_gp: " + oranges_toggled + " : " + classified_toggled + " : " + missed);
     oranges_toggled.forEach(function(jid, pct) {
-        console.log(" .." + jid);
         var job = document.querySelector(jid);
         job.className = job.className.replace(/btn-green/, "btn-orange");
     })
 
     classified_toggled.forEach(function(jid, pct) {
-        console.log(" .." + jid);
         var job = document.querySelector(jid);
         job.className = job.className.replace(/btn-green/, "btn-orange-classified");
     })
@@ -142,6 +139,7 @@ async function analyzeFailedTests() {
         let oranges_toggled = [];
         let classified_toggled = [];
         let missed = [];
+        let leaks = [];
         console.log("greener pastures has loaded the known failures and will analyze " + jobs.length + " failed jobs");
         jobs.forEach(function(job) {
           if (job == jobs[jobs.length -1])
@@ -174,7 +172,10 @@ async function analyzeFailedTests() {
                     let parts = failure.search.split('|');
                     if (parts.length == 3) {
                       testname = cleanTest(parts[1].trim());
-                      if (testname == 'leakcheck')
+
+                      if (testname == 'leakcheck' && parts[2].trim() == 'tab missing output line for total leaks!')
+                        return
+                      if (testname == 'leakcheck' && parts[2].trim() == 'plugin missing output line for total leaks!')
                         return
                       if (testname == 'Main app process exited normally')
                         return
@@ -188,7 +189,42 @@ async function analyzeFailedTests() {
                     let platform = platconf[0];
                     let config = platconf[1];
                     let pct = 0;
-                    if (typeof knownFailures[testname] !== 'undefined') {
+
+                    //TODO: figure out a solution for leaks, they happen A LOT
+                    if (testname == 'leakcheck' || testname == 'LeakSanitizer') {
+                        leaks.push([platform, config, testname, jobid]);
+                        //analyze, if >2 leaks on same platform, then leave orange
+                        bad_leaks = [];
+                        pmap = {};
+                        leaks.forEach(function (leak) {
+                            if (!(leak[0] in pmap)) {
+                                pmap[leak[0]] = [];
+                            }
+                            if (pmap[leak[0]].indexOf(leak[3]) == -1) pmap[leak[0]].push(leak[3])
+                            if (pmap[leak[0]].length >= 3) {
+                                pmap[leak[0]].forEach(function(jid) {
+                                    if (bad_leaks.indexOf(jid) == -1) bad_leaks.push(jid);
+                                });
+                            }
+                        });
+//                        console.log(pmap);
+//                        console.log(bad_leaks);
+
+                        // turn leaks orange again
+                        bad_leaks.forEach(function (jid) {
+                            classified_toggled.forEach(function(item) {
+                                if (item[0] == jid)
+                                    job.className = job.className.replace(/btn-orange-classified/, "btn-green");
+                            })
+                            oranges_toggled.forEach(function(item, pct) {
+                                if (item[0] == jid)
+                                    job.className = job.className.replace(/btn-orange/, "btn-green");
+                            })
+                        });
+                        if (bad_leaks.indexOf(jobid) == -1) {
+                            pct = 50;
+                        }
+                    } else if (typeof knownFailures[testname] !== 'undefined') {
                         pct = 50;
                         if (typeof knownFailures[testname][platform] !== 'undefined') {
                             pct = 75;
@@ -197,6 +233,11 @@ async function analyzeFailedTests() {
                             }
                         }
                     }
+
+                    if (pct == 0) {
+                        return
+                    }
+
                     if (job.className.indexOf('btn-orange-classified') >= 0) {
                         job.className = job.className.replace(/btn-orange-classified/, "btn-green");
                         classified_toggled.push([jobid, pct]);
@@ -204,7 +245,7 @@ async function analyzeFailedTests() {
                         job.className = job.className.replace(/btn-orange/, "btn-green");
                         oranges_toggled.push([jobid, pct]);
                     } else {
-                        console.log("BAD: '" + testname + "'");
+                        console.log("BAD: " + title + " : " + testname + " : " + job.className);
                         missed.push(jobid);
                     }
                     // TODO: if there is >1 test failure across platforms/config, increase pct
