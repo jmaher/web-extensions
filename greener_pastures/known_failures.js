@@ -24,6 +24,10 @@ let oranges_toggled = [];
 var classified_toggled = [];
 var missed = [];
 
+var infraLines = ['[taskcluster:error] Aborting task...',
+                  'raptor-main TEST-UNEXPECTED-FAIL: no raptor test results were found'];
+
+
 // Hack to take a job name and output a platform and config
 // mild sanitization goes on here
 //
@@ -81,16 +85,87 @@ window.onload = async function() {
 
 
 function toggle_gp() {
-    oranges_toggled.forEach(function(jid, pct) {
-        var job = document.querySelector(jid);
+    oranges_toggled.forEach(function(item) {
+        var job = document.querySelector(item[3]);
         job.className = job.className.replace(/btn-green/, "btn-orange");
     })
 
-    classified_toggled.forEach(function(jid, pct) {
-        var job = document.querySelector(jid);
+    classified_toggled.forEach(function(item) {
+        var job = document.querySelector(item[3]);
         job.className = job.className.replace(/btn-green/, "btn-orange-classified");
     })
+};
+
+
+function toggleJobs(list, classified_toggled, oranges_toggled) {
+    //TODO: turn leaks orange again
+    count = 0
+    list.forEach(function (todo_jid) {
+        classified_toggled.forEach(function(item) {
+            if (item[3] == todo_jid) {
+                let jobs = document.querySelectorAll('.gp-classified');
+                jobs.forEach(function (job) {
+                    let dji = job.attributes.getNamedItem('data-job-id').nodeValue;
+                    if (dji == todo_jid) {
+                        job.className = job.className.replace(/btn-green gp-classified/, "btn-orange-classified");
+                        count++;
+                    }
+                });
+            }
+        })
+        oranges_toggled.forEach(function(item, pct) {
+            if (item[3] == todo_jid) {
+                let jobs = document.querySelectorAll('.gp-orange');
+                jobs.forEach(function (job) {
+                    let dji = job.attributes.getNamedItem('data-job-id').nodeValue;
+                    if (dji == todo_jid) {
+                        job.className = job.className.replace(/btn-green gp-orange/, "btn-orange");
+                        count++;
+                    }
+                });
+            }
+        })
+    });
+    console.log("toggle " + count + " jobs back to orange");
 }
+
+function analyzeGreyZone(list) {
+    var bad_items = [];
+    let pmap = {};
+    list.forEach(function (item) {
+        let key = item[0];
+        if (!(key in pmap)) {
+            pmap[key] = [];
+        }
+        if (pmap[key].indexOf(item[3]) == -1) pmap[key].push(item[3])
+        if (pmap[key].length >= 3) {
+            pmap[key].forEach(function(jid) {
+                if (bad_items.indexOf(jid) == -1) bad_items.push(jid);
+            });
+        }
+    });
+    return bad_items;
+};
+
+
+function analyzeFrequentFailures(list) {
+    var bad_items = [];
+    let pmap = {};
+    list.forEach(function (item) {
+        let key = item[2];
+        if (!(key in pmap)) {
+            pmap[key] = [];
+        }
+        if (pmap[key].indexOf(item[3]) == -1) pmap[key].push(item[3])
+        if (pmap[key].length >= 3) {
+            pmap[key].forEach(function(jid) {
+                if (bad_items.indexOf(jid) == -1) bad_items.push(jid);
+            });
+        }
+    });
+    return bad_items;
+};
+
 
 var checkExist = setInterval(function() {
     var navbarElement = document.getElementById("th-global-navbar-top");
@@ -140,21 +215,16 @@ async function analyzeFailedTests() {
         let classified_toggled = [];
         let missed = [];
         let leaks = [];
+        let infra = []
         console.log("greener pastures has loaded the known failures and will analyze " + jobs.length + " failed jobs");
         jobs.forEach(function(job) {
+          //TODO: do we need this here?
           if (job == jobs[jobs.length -1])
               completed = true;
 
-          let attrs = job.attributes;
-          let jobid = 0;
-          let title = '';
-          for(var i = attrs.length - 1; i >= 0; i--) {
-            if (attrs[i].name == 'data-job-id')
-              jobid = attrs[i].value;
-            if (attrs[i].name == 'title')
-              title = attrs[i].value.split(' ')[2]
-          }
-          if (jobid == 0 || title == '')
+          let jobid = job.attributes.getNamedItem('data-job-id').nodeValue;
+          let title = job.attributes.getNamedItem('title').nodeValue;;
+          if (jobid == '' || title == '')
             return;
 
           // Get repo
@@ -167,6 +237,7 @@ async function analyzeFailedTests() {
           fetch(url)
             .then(function(response) {
                 response.json().then(function(failJson) {
+                  let job_matched = false;
                   failJson.forEach(function(failure) {
                     // TODO: find failures that have test names
                     let parts = failure.search.split('|');
@@ -179,9 +250,18 @@ async function analyzeFailedTests() {
                         return
                       if (testname == 'Main app process exited normally')
                         return
-                    } else {
+                    }
+                    else if (!job_matched) {
                       // ignore these, usually chain reaction messages or unrelated
-                      return
+                      let found = false;
+                      infraLines.forEach(function (line) {
+                          if (failure.search.indexOf(line) != -1) {
+                              found = true
+                          }
+                      });
+                      if (!found) return;
+
+                      testname = failure.search.trim();
                     }
 
                     // parse title (plaform,config) and testname and match with knownFailures
@@ -190,64 +270,65 @@ async function analyzeFailedTests() {
                     let config = platconf[1];
                     let pct = 0;
 
-                    //TODO: figure out a solution for leaks, they happen A LOT
-                    if (testname == 'leakcheck' || testname == 'LeakSanitizer') {
-                        leaks.push([platform, config, testname, jobid]);
-                        //analyze, if >2 leaks on same platform, then leave orange
-                        bad_leaks = [];
-                        pmap = {};
-                        leaks.forEach(function (leak) {
-                            if (!(leak[0] in pmap)) {
-                                pmap[leak[0]] = [];
-                            }
-                            if (pmap[leak[0]].indexOf(leak[3]) == -1) pmap[leak[0]].push(leak[3])
-                            if (pmap[leak[0]].length >= 3) {
-                                pmap[leak[0]].forEach(function(jid) {
-                                    if (bad_leaks.indexOf(jid) == -1) bad_leaks.push(jid);
-                                });
-                            }
-                        });
-//                        console.log(pmap);
-//                        console.log(bad_leaks);
-
-                        // turn leaks orange again
-                        bad_leaks.forEach(function (jid) {
-                            classified_toggled.forEach(function(item) {
-                                if (item[0] == jid)
-                                    job.className = job.className.replace(/btn-orange-classified/, "btn-green");
-                            })
-                            oranges_toggled.forEach(function(item, pct) {
-                                if (item[0] == jid)
-                                    job.className = job.className.replace(/btn-orange/, "btn-green");
-                            })
-                        });
-                        if (bad_leaks.indexOf(jobid) == -1) {
+                    //TODO: figure out a solution for timeouts/hang on start
+                    if (infraLines.indexOf(testname) != -1) {
+                        //if only error (no other lines matched yet), treat as infra
+                        if (!job_matched) {
                             pct = 50;
+                            infra.push([platform, config, testname, jobid, 50]);
+                            //analyze, if >2 leaks on same platform, then leave orange
+                            let bad_infra = analyzeGreyZone(infra);
+                            toggleJobs(bad_infra, classified_toggled, oranges_toggled);
+                            if (bad_infra.indexOf(jobid) == -1)
+                                pct = 50;
                         }
-                    } else if (typeof knownFailures[testname] !== 'undefined') {
+                    }
+                    //TODO: figure out a solution for leaks, they happen A LOT
+                    else if (testname == 'leakcheck' || testname == 'LeakSanitizer') {
+                        leaks.push([platform, config, testname, jobid, 50]);
+                        //analyze, if >2 leaks on same platform, then leave orange
+                        let bad_leaks = analyzeGreyZone(leaks);
+                        toggleJobs(bad_leaks, classified_toggled, oranges_toggled);
+                        if (bad_leaks.indexOf(jobid) == -1)
+                            pct = 50;
+                    }
+                    else if (typeof knownFailures[testname] !== 'undefined') {
                         pct = 50;
                         if (typeof knownFailures[testname][platform] !== 'undefined') {
                             pct = 75;
-                            if (typeof knownFailures[testname][platform][config] !== 'undefined') {
+                            if (typeof knownFailures[testname][platform][config] !== 'undefined')
                                 pct = 100;
-                            }
                         }
                     }
 
                     if (pct == 0) {
                         return
                     }
+                    if (job_matched) {
+                        return
+                    }
+                    job_matched = true;
 
                     if (job.className.indexOf('btn-orange-classified') >= 0) {
-                        job.className = job.className.replace(/btn-orange-classified/, "btn-green");
-                        classified_toggled.push([jobid, pct]);
+                        job.className = job.className.replace(/btn-orange-classified/, "btn-green gp-classified");
+                        classified_toggled.push([platform, config, testname, jobid, pct]);
                     } else if (job.className.indexOf('btn-orange') >= 0) {
-                        job.className = job.className.replace(/btn-orange/, "btn-green");
-                        oranges_toggled.push([jobid, pct]);
+                        job.className = job.className.replace(/btn-orange/, "btn-green gp-orange");
+                        oranges_toggled.push([platform, config, testname, jobid, pct]);
                     } else {
                         console.log("BAD: " + title + " : " + testname + " : " + job.className);
                         missed.push(jobid);
                     }
+
+                    // search for multiple failures across platforms/configs
+                    let temp = [];
+                    temp.push.apply(temp, classified_toggled);
+                    temp.push.apply(temp, oranges_toggled);
+                    let regressions = analyzeFrequentFailures(temp);
+                    toggleJobs(regressions, classified_toggled, oranges_toggled);
+                    if (regressions.indexOf(jobid) == -1)
+                        pct = 50;
+
                     // TODO: if there is >1 test failure across platforms/config, increase pct
                     // TODO: if there are a collection of failures in the same dir or platform, increase pct
                     var status = document.getElementById('toggle_gp')

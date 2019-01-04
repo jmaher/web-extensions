@@ -59,14 +59,13 @@ def query_activedata_configs():
             continue
 
         if temp not in configs:
-            print temp
             configs.append(temp)
     return configs
 
-def query_activedata(e10s, platforms=None):
-    e10s_clause = '"eq":{"run.type":"e10s"}'
-    if not e10s:
-        e10s_clause = '"not":{%s}' % e10s_clause
+def query_activedata(config, platforms=None):
+    config_clause = ''
+    if config:
+        config_clause = '{"eq":{"run.type":"%s"}},' % config
 
     # TODO: skip talos, raptor, test-verify, etc.
 
@@ -87,11 +86,11 @@ def query_activedata(e10s, platforms=None):
 		{"in":{"repo.branch.name":["mozilla-inbound","autoland","mozilla-central"]}},
         {"eq":{"run.machine.platform":"%s"}},
         {"eq":{"result.ok":"F"}},
-        {%s},
+        %s
         {"gt":{"run.timestamp":%s}}
     ]}
 }
-""" % (platforms, e10s_clause, last_week_timestamp)
+""" % (platforms, config_clause, last_week_timestamp)
 
     response = requests.post(ACTIVE_DATA_URL,
                              data=query,
@@ -125,9 +124,9 @@ def query_activedata(e10s, platforms=None):
 
     return retVal
 
-def write_timecounts(data, e10s, platform, outdir=here):
-    if e10s:
-        platform = "%s-e10s" % platform
+def write_timecounts(data, config, platform, outdir=here):
+    if config:
+        platform = "%s-%s" % (platform, config)
 
     outfilename = os.path.join(outdir, "%s.failures.json" % (platform))
     if not os.path.exists(outdir):
@@ -154,12 +153,12 @@ def cli(args=sys.argv[1:]):
         if config[1] == 'e10s':
             e10s = True
  
-        data = query_activedata(e10s, config[0])
+        data = query_activedata(config[1], config[0])
         if data == []:
             print("no data.....")
             continue
 
-        filenames.append(write_timecounts(data, e10s, config[0], outdir=args.outdir))
+        filenames.append(write_timecounts(data, config[1], config[0], outdir=args.outdir))
 
     failures = {}
     for filename in filenames:
