@@ -167,9 +167,38 @@ function analyzeFrequentFailures(list) {
 };
 
 
+function titleToJobName(title) {
+    let jobname = title.split('|')[1];
+    jobname = jobname.trim();
+    jobname = jobname.split(' ')[0];
+    return jobname;
+}
+
+
+//TODO: make this more optimized, this is called everytime, maybe cache the results of repeated jobs?
+// if there is >2 data points and >=50% are green, ignore it
+function repeatSuccess(failedjob) {
+    //get job type and query matching jobs (platform/config/name/chunk)
+    let target_title = titleToJobName(failedjob.attributes.getNamedItem('title').nodeValue);
+    let jobs = document.querySelectorAll('.job-btn');
+    let matched_jobs = [];
+    let success = 0;
+    jobs.forEach(function (job) {
+        let title = titleToJobName(job.attributes.getNamedItem('title').nodeValue);
+        if (title == target_title) {
+            let status = job.attributes.getNamedItem('title').nodeValue.split('|')[0].trim();
+            matched_jobs.push(job);
+            if (status == 'success')
+                success++;
+        }
+    });
+    return (success / matched_jobs.length);
+};
+
+
 var checkExist = setInterval(function() {
     var navbarElement = document.getElementById("th-global-navbar-top");
-	var revnodes = document.querySelectorAll('span .revision-list')
+	var revnodes = document.querySelectorAll('span .revision-list');
 	var inserted_elements_gp = document.getElementById("toggle_gp");
 	if (revnodes.length >= 1 && !inserted_elements_gp && !completed) {
 		if (!inserted_elements_gp) {
@@ -218,12 +247,12 @@ async function analyzeFailedTests() {
         let infra = []
         console.log("greener pastures has loaded the known failures and will analyze " + jobs.length + " failed jobs");
         jobs.forEach(function(job) {
-          //TODO: do we need this here?
+          //TODO: figure out a better solution for notifying "done"
           if (job == jobs[jobs.length -1])
               completed = true;
 
           let jobid = job.attributes.getNamedItem('data-job-id').nodeValue;
-          let title = job.attributes.getNamedItem('title').nodeValue;;
+          let title = job.attributes.getNamedItem('title').nodeValue;
           if (jobid == '' || title == '')
             return;
 
@@ -259,7 +288,10 @@ async function analyzeFailedTests() {
                               found = true
                           }
                       });
-                      if (!found) return;
+
+                      // for infra issues or other failures, this helps
+                      repeated = repeatSuccess(job);
+                      if (!found && repeated < 0.5) return;
 
                       testname = failure.search.trim();
                     }
@@ -301,13 +333,19 @@ async function analyzeFailedTests() {
                         }
                     }
 
-                    if (pct == 0) {
+                    let repeat = repeatSuccess(job) * 100;
+                    if (repeat >= 50) pct = repeat;
+                    
+                    if (pct < 50) {
                         return
                     }
                     if (job_matched) {
                         return
                     }
                     job_matched = true;
+
+                    //TODO: figure out a solution for retriggered failures
+                    // if there is >2 data points and >=50% are green, ignore it
 
                     if (job.className.indexOf('btn-orange-classified') >= 0) {
                         job.className = job.className.replace(/btn-orange-classified/, "btn-green gp-classified");
