@@ -263,6 +263,10 @@ async function analyzeFailedTests() {
 
           url = 'https://treeherder.mozilla.org/api/project/' + repo;
           url += '/jobs/' + jobid + '/bug_suggestions/';
+
+          classification = 'https://treeherder.mozilla.org/api/project/' + repo;
+          classification += '/note/?job_id=' + jobid;
+          //TODO: fetch the classification to ensure we are not making FBC green again
           fetch(url)
             .then(function(response) {
                 response.json().then(function(failJson) {
@@ -343,9 +347,6 @@ async function analyzeFailedTests() {
                         return
                     }
                     job_matched = true;
-
-                    //TODO: figure out a solution for retriggered failures
-                    // if there is >2 data points and >=50% are green, ignore it
 
                     if (job.className.indexOf('btn-orange-classified') >= 0) {
                         job.className = job.className.replace(/btn-orange-classified/, "btn-green gp-classified");
