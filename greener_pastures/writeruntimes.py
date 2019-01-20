@@ -14,9 +14,53 @@ here = os.path.abspath(os.path.dirname(__file__))
 ACTIVE_DATA_URL = "https://activedata.allizom.org/query"
 TIME_WINDOW = 14
 
-def query_activedata_configs():
 
-    last_week = datetime.datetime.now() - datetime.timedelta(days=TIME_WINDOW)
+def query_fbc_jobs(end_timestamp=None):
+    if not end_timestamp:
+        end_timestamp = datetime.datetime.now()
+    start_timestamp = end_timestamp - datetime.timedelta(days=TIME_WINDOW)
+
+    query = """
+{
+	"from":"treeherder",
+	"select":[
+		"job.id",
+        "repo.branch.name",
+		"failure.notes.text"
+	],
+	"where":{"and":[
+		{"in":{"repo.branch.name":["mozilla-inbound","autoland","mozilla-central"]}},
+		{"gt":{"repo.push.date":{"date":"%s"}}},
+		{"lte":{"repo.push.date":{"date":"%s"}}},
+		{"regex":{"job.type.name":"test-.*"}},
+		{"eq":{"failure.classification":"fixed by commit"}}
+	]},
+	"limit":50000
+}""" % (start_timestamp.date(), end_timestamp.date())
+
+    response = requests.post(ACTIVE_DATA_URL,
+                             data=query,
+                             stream=True)
+    response.raise_for_status()
+    data = response.json()["data"]
+    retVal = []
+    # build array of jobids
+    for counter in range(0, len(data['job.id'])):
+        if not data['failure.notes.text'][counter]:
+           continue
+        if data['failure.notes.text'][counter] == '':
+            continue
+        if data['job.id'][counter] not in retVal:
+            retVal.append([data['job.id'][counter], data['repo.branch.name'][counter]])
+    return retVal
+
+
+def query_activedata_configs(end_timestamp=None):
+
+    if not end_timestamp:
+        end_timestamp = datetime.datetime.now()
+    last_week = end_timestamp - datetime.timedelta(days=TIME_WINDOW)
+    end_timestamp = time.mktime(end_timestamp.timetuple())
     last_week_timestamp = time.mktime(last_week.timetuple())
 
     query = """
@@ -28,11 +72,12 @@ def query_activedata_configs():
 	],
 	"limit":200000,
 	"where":{"and":[{"gt":{"run.timestamp":%s}},
+                    {"lt":{"run.timestamp":%s}},
                     {"neq":{"run.type":"ccov"}},
       {"in":{"repo.branch.name":["mozilla-inbound", "autoland", "mozilla-central"]}}
     ]}
  }
-""" % (last_week_timestamp)
+""" % (last_week_timestamp, end_timestamp)
 
     response = requests.post(ACTIVE_DATA_URL,
                              data=query,
@@ -62,14 +107,17 @@ def query_activedata_configs():
             configs.append(temp)
     return configs
 
-def query_activedata(config, platforms=None):
+def query_activedata(config, platforms=None, end_timestamp=None):
     config_clause = ''
     if config:
         config_clause = '{"eq":{"run.type":"%s"}},' % config
 
     # TODO: skip talos, raptor, test-verify, etc.
 
-    last_week = datetime.datetime.now() - datetime.timedelta(days=TIME_WINDOW)
+    if not end_timestamp:
+        end_timestamp = datetime.datetime.now()
+    last_week = end_timestamp - datetime.timedelta(days=TIME_WINDOW)
+    end_timestamp = time.mktime(end_timestamp.timetuple())
     last_week_timestamp = time.mktime(last_week.timetuple())
 
     # NOTE: we could add build.type to groupby and do fewer queries
@@ -87,10 +135,11 @@ def query_activedata(config, platforms=None):
         {"eq":{"run.machine.platform":"%s"}},
         {"eq":{"result.ok":"F"}},
         %s
-        {"gt":{"run.timestamp":%s}}
+        {"gt":{"run.timestamp":%s}},
+        {"lt":{"run.timestamp":%s}}
     ]}
 }
-""" % (platforms, config_clause, last_week_timestamp)
+""" % (platforms, config_clause, last_week_timestamp, end_timestamp)
 
     response = requests.post(ACTIVE_DATA_URL,
                              data=query,
@@ -143,9 +192,22 @@ def cli(args=sys.argv[1:]):
     parser = ArgumentParser()
     parser.add_argument('-o', '--output-directory', dest='outdir',
         default=here, help="Directory to save runtime data.")
+    parser.add_argument('-f', '--from-date', dest='from_date',
+        default=None, help="If we want to specify a start date, default 2 weeks prior to --to-date")
+    parser.add_argument('-t', '--to-date', dest='to_date',
+        default=None, help="If we want to specify an end date")
     args = parser.parse_args(args)
 
-    configs = query_activedata_configs()
+    # assume format like: 2019-01-15
+    if args.to_date:
+        parts = args.to_date.split('-')
+        args.to_date = datetime.datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+
+    # we want to know historical failures that are regressions
+    # we can use the job name, revision, jobid to filter them
+    fbc = query_fbc_jobs(args.to_date)
+
+    configs = query_activedata_configs(args.to_date)
     filenames = []
     print("%s configs to test..." % len(configs))
     for config in configs:
@@ -153,7 +215,7 @@ def cli(args=sys.argv[1:]):
         if config[1] == 'e10s':
             e10s = True
  
-        data = query_activedata(config[1], config[0])
+        data = query_activedata(config[1], config[0], args.to_date)
         if data == []:
             print("no data.....")
             continue
@@ -174,6 +236,7 @@ def cli(args=sys.argv[1:]):
                 if item[1] not in failures[item[0]][platform]:
                     failures[item[0]][platform][item[1]] = 0
                 failures[item[0]][platform][item[1]] += item[2]
+    failures['fixed_by_commit'] = fbc
 
     with open('failures.json', 'w') as f:
         json.dump(failures, f)
