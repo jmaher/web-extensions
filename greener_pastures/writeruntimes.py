@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 from argparse import ArgumentParser
-from collections import defaultdict
 import datetime
 import json
 import os
@@ -18,24 +17,26 @@ TIME_WINDOW = 14
 def query_fbc_jobs(end_timestamp=None):
     if not end_timestamp:
         end_timestamp = datetime.datetime.now()
-    start_timestamp = end_timestamp - datetime.timedelta(days=TIME_WINDOW)
+    # TODO: doing this for 30 days results in better results
+    start_timestamp = end_timestamp - datetime.timedelta(days=30)
 
     query = """
 {
-	"from":"treeherder",
-	"select":[
-		"job.id",
+    "from":"treeherder",
+    "select":[
+        "job.id",
         "repo.branch.name",
-		"failure.notes.text"
-	],
-	"where":{"and":[
-		{"in":{"repo.branch.name":["mozilla-inbound","autoland","mozilla-central"]}},
-		{"gt":{"repo.push.date":{"date":"%s"}}},
-		{"lte":{"repo.push.date":{"date":"%s"}}},
-		{"regex":{"job.type.name":"test-.*"}},
-		{"eq":{"failure.classification":"fixed by commit"}}
-	]},
-	"limit":50000
+        "build.revision12",
+        "failure.notes.text"
+    ],
+    "where":{"and":[
+        {"in":{"repo.branch.name":["mozilla-inbound","autoland","mozilla-central"]}},
+        {"gt":{"repo.push.date":{"date":"%s"}}},
+        {"lte":{"repo.push.date":{"date":"%s"}}},
+        {"regex":{"job.type.name":"test-.*"}},
+        {"eq":{"failure.classification":"fixed by commit"}}
+    ]},
+    "limit":50000
 }""" % (start_timestamp.date(), end_timestamp.date())
 
     response = requests.post(ACTIVE_DATA_URL,
@@ -47,11 +48,13 @@ def query_fbc_jobs(end_timestamp=None):
     # build array of jobids
     for counter in range(0, len(data['job.id'])):
         if not data['failure.notes.text'][counter]:
-           continue
+            continue
         if data['failure.notes.text'][counter] == '':
             continue
         if data['job.id'][counter] not in retVal:
-            retVal.append([data['job.id'][counter], data['repo.branch.name'][counter]])
+            retVal.append([data['job.id'][counter],
+                           data['repo.branch.name'][counter],
+                           data['build.revision12'][counter]])
     return retVal
 
 
@@ -65,16 +68,16 @@ def query_activedata_configs(end_timestamp=None):
 
     query = """
 {
-	"from":"unittest",
-	"groupby":[
-		"run.machine.platform",
-		"run.type"
-	],
-	"limit":200000,
-	"where":{"and":[{"gt":{"run.timestamp":%s}},
+    "from":"unittest",
+    "groupby":[
+        "run.machine.platform",
+        "run.type"
+    ],
+    "limit":200000,
+    "where":{"and":[{"gt":{"run.timestamp":%s}},
                     {"lt":{"run.timestamp":%s}},
                     {"neq":{"run.type":"ccov"}},
-      {"in":{"repo.branch.name":["mozilla-inbound", "autoland", "mozilla-central"]}}
+      {"in":{"repo.branch.name":["mozilla-inbound","autoland","mozilla-central"]}}
     ]}
  }
 """ % (last_week_timestamp, end_timestamp)
@@ -95,17 +98,18 @@ def query_activedata_configs(end_timestamp=None):
             else:
                 c[1] = 'e10s'
 
-        if c[1] == None:
+        if c[1] is None:
             c[1] = ''
         c[1] = c[1].replace('chunked', '')
         temp.append(c[1])
-        if c[2] == None:
+        if c[2] is None:
             temp = []
             continue
 
         if temp not in configs:
             configs.append(temp)
     return configs
+
 
 def query_activedata(config, platforms=None, end_timestamp=None):
     config_clause = ''
@@ -126,12 +130,12 @@ def query_activedata(config, platforms=None, end_timestamp=None):
     "from":"unittest",
     "limit":200000,
     "groupby":["result.test", "build.type"],
-	"select":[
-		{"aggregate":"count","value":"result.ok"},
-		{"aggregate":"average","value":"result.duration"}
-	],
+    "select":[
+        {"aggregate":"count","value":"result.ok"},
+        {"aggregate":"average","value":"result.duration"}
+    ],
     "where":{"and":[
-		{"in":{"repo.branch.name":["mozilla-inbound","autoland","mozilla-central"]}},
+        {"in":{"repo.branch.name":["mozilla-inbound","autoland","mozilla-central"]}},
         {"eq":{"run.machine.platform":"%s"}},
         {"eq":{"result.ok":"F"}},
         %s
@@ -155,7 +159,8 @@ def query_activedata(config, platforms=None, end_timestamp=None):
             config = ['opt']
 
         if 'pgo' in config or 'asan' in config:
-            config = config.remove('opt')
+            if 'opt' in config:
+                config = config.remove('opt')
         elif 'qr' in config:
             config = config.remove('qr')
         elif 'ccov' in config:
@@ -172,6 +177,7 @@ def query_activedata(config, platforms=None, end_timestamp=None):
         print(query)
 
     return retVal
+
 
 def write_timecounts(data, config, platform, outdir=here):
     if config:
@@ -191,17 +197,22 @@ def write_timecounts(data, config, platform, outdir=here):
 def cli(args=sys.argv[1:]):
     parser = ArgumentParser()
     parser.add_argument('-o', '--output-directory', dest='outdir',
-        default=here, help="Directory to save runtime data.")
+                        default=here,
+                        help="Directory to save runtime data.")
     parser.add_argument('-f', '--from-date', dest='from_date',
-        default=None, help="If we want to specify a start date, default 2 weeks prior to --to-date")
+                        default=None,
+                        help="start date- default:2 weeks prior to --to-date")
     parser.add_argument('-t', '--to-date', dest='to_date',
-        default=None, help="If we want to specify an end date")
+                        default=None,
+                        help="If we want to specify an end date")
     args = parser.parse_args(args)
 
     # assume format like: 2019-01-15
     if args.to_date:
         parts = args.to_date.split('-')
-        args.to_date = datetime.datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+        args.to_date = datetime.datetime(int(parts[0]),
+                                         int(parts[1]),
+                                         int(parts[2]))
 
     # we want to know historical failures that are regressions
     # we can use the job name, revision, jobid to filter them
@@ -211,16 +222,13 @@ def cli(args=sys.argv[1:]):
     filenames = []
     print("%s configs to test..." % len(configs))
     for config in configs:
-        e10s = False
-        if config[1] == 'e10s':
-            e10s = True
- 
         data = query_activedata(config[1], config[0], args.to_date)
         if data == []:
             print("no data.....")
             continue
 
-        filenames.append(write_timecounts(data, config[1], config[0], outdir=args.outdir))
+        retfile = write_timecounts(data, config[1], config[0], args.outdir)
+        filenames.append(retfile)
 
     failures = {}
     for filename in filenames:
@@ -241,6 +249,6 @@ def cli(args=sys.argv[1:]):
     with open('failures.json', 'w') as f:
         json.dump(failures, f)
 
-   
+
 if __name__ == "__main__":
     sys.exit(cli())
