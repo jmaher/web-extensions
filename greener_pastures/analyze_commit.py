@@ -257,6 +257,7 @@ def repeatSuccessJobs(failedjob, allJobs):
     success = len([x for x in matched_jobs if x['result'] == 'success'])
     if success + len(matched_jobs) < 2:
         return 0.5
+
     return (success / len(matched_jobs))
 
 
@@ -290,6 +291,61 @@ def analyzeFrequentFailures(list, max_failures=3):
         if len(pmap[key]) >= max_failures:
             bad_items.extend([x for x in pmap[key] if x not in bad_items])
     return bad_items
+
+
+def analyzeSimilarJobs(list, alljobs, max_failures=3):
+    # look if all jobs failed, even if we only ran a few- also match suite level
+    bad_items = []
+    # find the suite name, not platform, not chunk, but flavor is ok
+    suites = ['talos', 'raptor', 'awsy',
+              'mochitest', 'web-platform-tests', 'reftest',  # subsuites
+              'crashtest',
+              'xpcshell',
+              'firefox-ui',
+              'marionette',
+              'source-test', 'generate-profile',
+              'robocop', 'junit',
+              'cppunit', 'gtest', 'jittest']
+
+    failed_suites = []
+    for item in list:
+        try:
+            suite = [x for x in suites if x in item[4]][0]
+        except:
+            print "missing suite: %s" % item[4]
+            continue
+
+        if suite in ['mochitest', 'web-platform-tests', 'reftest']:
+            # subsuites
+            if suite == 'reftest' and 'jsreftest' in item[4]:
+                suite = 'jsreftest'
+            elif suite == 'reftest' and 'gpu' in item[4]:
+                suite = 'reftest'
+            elif suite == 'web-platform-tests' and 'reftest' in item[4]:
+                suite = 'web-platform-tests-reftests'
+            elif suite == 'web-platform-tests' and 'wdspec' in item[4]:
+                suite = 'web-platform-tests-wdspec'
+            else:
+                sub = item[4].split(suite)[1]
+                parts = sub.split('-')
+
+                if len(parts) > 1 and parts[1] not in ['e10s', 'headless', 'no']:
+                    try:
+                        x = int(parts[1])
+                    except ValueError:
+                        suite = 'mochitest-%s' % parts[1]
+
+        if suite not in failed_suites:
+            failed_suites.append(suite)
+
+    for suite in failed_suites:
+        failures = [x for x in list if suite in x[4]]
+        all = [x for x in alljobs if suite in x['job_type_name']]
+
+        # if 75% of all jobs are failed jobs, then add to bad_items
+        if len(failures) / (len(all) * 1.0) >= .75:
+            bad_items.extend(failures)
+    return [x[3] for x in bad_items]
 
 
 def analyzeSimilarFailures(list, max_failures=3):
@@ -542,6 +598,9 @@ def analyzeJobs(jobs, alljobs):
     rv = analyzeFrequentFailures(results, max_failures=max_failures)
     unknown_ids.extend([x for x in rv if x not in unknown_ids])
 
+    rv = analyzeSimilarJobs(results, alljobs, max_failures=max_failures)
+    unknown_ids.extend([x for x in rv if x not in unknown_ids])
+
     rv = analyzeSimilarFailures(results, max_failures=max_failures)
     unknown_ids.extend([x for x in rv if x not in unknown_ids])
 
@@ -599,7 +658,11 @@ def analyzePush(client, branch, push, verbose=False):
     missed = [x for x in missed if x['id'] not in regressed_ids]
     bad_classified = [x for x in regressed_jobs if x['id'] in orange_ids]
 
-    if verbose and len(bad_classified) > 0:
+    bad_push = False
+    if len(bad_classified):
+        if len(regressed_jobs) / len(bad_classified) < 2: bad_push = True
+
+    if verbose and bad_push:
         print push['revision']
         print "  failed: %s" % len(failed_jobs)
         print "  oranges: %s" % len(oranges)
@@ -622,7 +685,7 @@ def analyzePush(client, branch, push, verbose=False):
             'missed_jobs': len(missed),
             'missed_push': int(len(missed) > 0),
             'bad_jobs': len(bad_classified),
-            'bad_push': int(len(bad_classified) > 0)}
+            'bad_push': int(bad_push)}
 
 
 def getPushes(client, branch, date):
@@ -648,10 +711,23 @@ def getPushes(client, branch, date):
 
 client = TreeherderClient(server_url='https://treeherder.mozilla.org')
 branch = 'autoland'
-dates = ['2019-01-15', '2019-01-16', '2019-01-17', '2019-01-18', '2019-01-19']
 
-for iter in range(15, 29):
-    date = '2019-01-%s' % iter
+print "date, bad, known, missed, failed jobs"
+bad = 0
+missed = 0
+failed = 0
+regressed = 0
+dates = []
+for iter in range(24,32):
+    dates.append('2018-12-%s' % iter)
+for iter in range(1, 32):
+    if iter < 10:
+        iter = "0%s" % iter
+    dates.append('2019-01-%s' % iter)
+
+dates = ['2019-01-04', '2019-01-10', '2019-01-22', '2019-01-29']
+
+for date in dates:
     pushes = getPushes(client, branch, date)
     loadFailures(date)
     loadFBCTests(client, date)
@@ -666,14 +742,27 @@ for iter in range(15, 29):
              'bad_push': 0}
 
     for push in pushes:
-        results = analyzePush(client, branch, push, verbose=False)
+        results = analyzePush(client, branch, push, verbose=True)
         for item in results.keys():
             total[item] += results[item]
 
-    print "%s: %s (%s), %s (%s) - failed: %s (%s)" % (date,
-                                                      total['bad_push'],
-                                                      total['bad_jobs'],
-                                                      total['missed_push'],
-                                                      total['missed_jobs'],
-                                                      len(pushes),
-                                                      total['failed'])
+#    print "%s: %s (%s), %s (%s) - failed: %s (%s)" % (date,
+#                                                      total['bad_push'],
+#                                                      total['bad_jobs'],
+#                                                      total['missed_push'],
+#                                                      total['missed_jobs'],
+#                                                      len(pushes),
+#                                                      total['failed'])
+
+    print "%s, %s, %s, %s, %s" % (date,
+                                  total['bad_push'],
+                                  total['regressed_jobs'],
+                                  total['missed_jobs'],
+                                  total['failed'])
+
+    bad += total['bad_push']
+    regressed += total['regressed_jobs']
+    missed += total['missed_jobs']
+    failed += total['failed']
+print "          , %s, %s, %s" % (bad, missed, failed)
+

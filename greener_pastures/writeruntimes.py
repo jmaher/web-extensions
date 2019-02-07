@@ -32,7 +32,7 @@ def query_fbc_jobs(end_timestamp=None):
     "where":{"and":[
         {"in":{"repo.branch.name":["mozilla-inbound","autoland","mozilla-central"]}},
         {"gt":{"repo.push.date":{"date":"%s"}}},
-        {"lte":{"repo.push.date":{"date":"%s"}}},
+        {"lt":{"repo.push.date":{"date":"%s"}}},
         {"regex":{"job.type.name":"test-.*"}},
         {"eq":{"failure.classification":"fixed by commit"}}
     ]},
@@ -213,41 +213,52 @@ def cli(args=sys.argv[1:]):
         args.to_date = datetime.datetime(int(parts[0]),
                                          int(parts[1]),
                                          int(parts[2]))
+    date = args.to_date
+    cachedir = args.outdir
 
-    # we want to know historical failures that are regressions
-    # we can use the job name, revision, jobid to filter them
-    fbc = query_fbc_jobs(args.to_date)
+    import shutil
+    for iter in range(1,32):
+        date = datetime.datetime(2018, 12, iter)
+        print "generated data for date: %s" % date
 
-    configs = query_activedata_configs(args.to_date)
-    filenames = []
-    print("%s configs to test..." % len(configs))
-    for config in configs:
-        data = query_activedata(config[1], config[0], args.to_date)
-        if data == []:
-            print("no data.....")
-            continue
+        if os.path.exists(cachedir):
+            shutil.rmtree(cachedir)
+        os.mkdir(cachedir)
 
-        retfile = write_timecounts(data, config[1], config[0], args.outdir)
-        filenames.append(retfile)
+        # we want to know historical failures that are regressions
+        # we can use the job name, revision, jobid to filter them
+        fbc = query_fbc_jobs(date)
 
-    failures = {}
-    for filename in filenames:
-        platform = filename.split(os.sep)[1]
-        platform = platform.split('.')[0]
-        with open(filename, 'r') as f:
-            data = json.load(f)
-            for item in data:
-                if item[0] not in failures:
-                    failures[item[0]] = {}
-                if platform not in failures[item[0]]:
-                    failures[item[0]][platform] = {}
-                if item[1] not in failures[item[0]][platform]:
-                    failures[item[0]][platform][item[1]] = 0
-                failures[item[0]][platform][item[1]] += item[2]
-    failures['fixed_by_commit'] = fbc
+        configs = query_activedata_configs(date)
+        filenames = []
+        print("%s configs to test..." % len(configs))
+        for config in configs:
+            data = query_activedata(config[1], config[0], date)
+            if data == []:
+                print("no data.....")
+                continue
 
-    with open('failures.json', 'w') as f:
-        json.dump(failures, f)
+            retfile = write_timecounts(data, config[1], config[0], cachedir)
+            filenames.append(retfile)
+
+        failures = {}
+        for filename in filenames:
+            platform = filename.split(os.sep)[1]
+            platform = platform.split('.')[0]
+            with open(filename, 'r') as f:
+                data = json.load(f)
+                for item in data:
+                    if item[0] not in failures:
+                        failures[item[0]] = {}
+                    if platform not in failures[item[0]]:
+                        failures[item[0]][platform] = {}
+                    if item[1] not in failures[item[0]][platform]:
+                        failures[item[0]][platform][item[1]] = 0
+                    failures[item[0]][platform][item[1]] += item[2]
+        failures['fixed_by_commit'] = fbc
+
+        with open('failures-%s.json' % date.date(), 'w') as f:
+            json.dump(failures, f)
 
 
 if __name__ == "__main__":
