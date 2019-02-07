@@ -2,7 +2,7 @@ In order to filter out a lot of noise in the intermittent tests, we need to have
  * testnames and related configurations for the last 14 days
  * specific testnames that are annotated as fixed_by_commit
 
-= Testnames of previous failures = 
+# Testnames of previous failures
 For the testnames and related configurations, I currently query active data for tests that have failed in the last 14 days.  This is a big list and I include the platform and configuration we run on.  This gets stored in a data structure:
 [{testname: {platform1: {config1: count, config2: count}, platform 2: {config1: count}},
  {testname2: {platform1: {config1: count, config2: count}, platform 2: {config1: count}}]
@@ -21,7 +21,7 @@ Some caveats here:
  * we do not care about bugs or other annotations, only the raw failures
 
 
-= Testnames of fixed_by_commit failures =
+# Testnames of fixed_by_commit failures
 The second type of data we care about is previous regressions found.  Often we backout code for failing a test and in many cases the same test will find multiple regressions (sometimes the same patch).  In playing with this data we fond that previous regression data was needed for >14 days, and analyzing many regressions it became clear that the large majority of regressions that showed up again happened within 30 days.
 
 Here we currently query active data for tests that failed but have failure_classification=2 (fixed_by_commit).  This produces a much smaller list than the overall failures, but keep in mind that this is a subset of the original failures.
