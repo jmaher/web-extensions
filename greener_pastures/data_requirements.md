@@ -4,8 +4,19 @@ In order to filter out a lot of noise in the intermittent tests, we need to have
 
 # Testnames of previous failures
 For the testnames and related configurations, I currently query active data for tests that have failed in the last 14 days.  This is a big list and I include the platform and configuration we run on.  This gets stored in a data structure:
-[{testname: {platform1: {config1: count, config2: count}, platform 2: {config1: count}},
- {testname2: {platform1: {config1: count, config2: count}, platform 2: {config1: count}}]
+`[{testname:
+    {platform1:
+      {config1: count,
+       config2: count},
+     platform 2:
+      {config1: count}},
+ {testname2:
+    {platform1:
+      {config1: count,
+       config2: count},
+     platform 2:
+      {config1: count}}
+]`
 
 In this case there are some parameters to understand here:
  * testname*: this is name of the test (failure_line sanitized), a string
