@@ -40,7 +40,9 @@ The second type of data we care about is previous regressions found.  Often we b
 Here we currently query active data for tests that failed but have failure_classification=2 (fixed_by_commit).  This produces a much smaller list than the overall failures, but keep in mind that this is a subset of the original failures.
 
 This data is stored in an array:
+```
 [testname1, testname2, testname3, etc.]
+```
 
 In order to get the testnames, we actually do a 2 pass query:
  * query activedata for jobids that have failure_classification=2
