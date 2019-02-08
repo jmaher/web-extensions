@@ -197,7 +197,7 @@ def write_timecounts(data, config, platform, outdir=here):
 def cli(args=sys.argv[1:]):
     parser = ArgumentParser()
     parser.add_argument('-o', '--output-directory', dest='outdir',
-                        default=here,
+                        default='failures',
                         help="Directory to save runtime data.")
     parser.add_argument('-f', '--from-date', dest='from_date',
                         default=None,
@@ -213,12 +213,20 @@ def cli(args=sys.argv[1:]):
         args.to_date = datetime.datetime(int(parts[0]),
                                          int(parts[1]),
                                          int(parts[2]))
-    date = args.to_date
+        dates = [args.to_date]
+    else:
+        for iter in range(23,32):
+            dates.append(datetime.datetime(2018, 12, iter))
+        for iter in range(1,32):
+            dates.append(datetime.datetime(2019, 1, iter))
+        for iter in range(1,20):
+            dates.append(datetime.datetime(2019, 2, iter))
+
+
     cachedir = args.outdir
 
     import shutil
-    for iter in range(1,32):
-        date = datetime.datetime(2018, 12, iter)
+    for date in dates:
         print "generated data for date: %s" % date
 
         if os.path.exists(cachedir):
