@@ -49,15 +49,21 @@ def loadFBCTests(thclient, date, start=0, end=None):
         if not os.path.exists(raw_filename) or \
            str(jobid[0]) not in raw_data.keys():
             new_failures = True
-            print "missing key: %s" % jobid[0]
-            failures = thclient._get_json('jobs/%s/bug_suggestions' % jobid[0],
-                                          project=jobid[1])
+            print("missing key: %s" % jobid[0])
+            try:
+                failures = thclient._get_json('jobs/%s/bug_suggestions' % jobid[0],
+                                              project=jobid[1])
+            except:
+                print("FAILURE retrieving bug_suggestions: %s" % jobid[0])
+                failures = [{'search': ''}]
             raw_data[str(jobid[0])] = failures
         else:
             failures = raw_data[str(jobid[0])]
 
-        lines = [f['search'].split('|')[1]
-                 for f in failures if len(f['search'].split('|')) == 3]
+        lines = []
+        for f in failures:
+            if len(f['search'].split('|')) == 3:
+                lines.append(f['search'].split('|')[1])
 
         job_tests = []
         for line in lines:
@@ -80,10 +86,10 @@ def loadFBCTests(thclient, date, start=0, end=None):
 
         testnames.extend(job_tests[start:end])
 
-    with open(filename, 'wb') as f:
+    with open(filename, 'w') as f:
         json.dump(testnames, f)
     if not os.path.exists(raw_filename) or new_failures:
-        with open(raw_filename, 'wb') as f:
+        with open(raw_filename, 'w') as f:
             json.dump(raw_data, f)
     FAILURES['fixed_by_commit_tests'] = testnames
 
@@ -106,13 +112,20 @@ def loadFailureLines(thclient, jobs, branch, revision, force=False):
 
     for job in jobs:
         # get bug_suggestions, not available via client, so doing a raw query
-        failures = thclient._get_json('jobs/%s/bug_suggestions' % job['id'],
-                                      project='autoland')
-        lines = [f['search'] for f in failures]
+        try:
+            failures = thclient._get_json('jobs/%s/bug_suggestions' % job['id'],
+                                          project='autoland')
+        except:
+            print("FAILURE retrieving bug_suggestions: %s" % job['id'])
+            job['failure_lines'] = ['']
+            retVal.append(job)
+            continue
+
+        lines = [f['search'].encode('ascii', 'ignore').decode('utf-8') for f in failures]
         job['failure_lines'] = lines
         retVal.append(job)
 
-    with open(filename, 'wb') as f:
+    with open(filename, 'w') as f:
         json.dump(retVal, f)
 
     return retVal
@@ -142,7 +155,7 @@ def loadAllJobs(thclient, branch, revision):
                 offset += count
             else:
                 done = True
-    with open(filename, 'wb') as f:
+    with open(filename, 'w') as f:
         json.dump(retVal, f)
     return retVal
 
@@ -188,8 +201,8 @@ def cleanConfigs(job):
     if platform.startswith('macosx64'):
         platform = platform.replace('macosx64', 'osx-10-10')
 
-    job['config'] = config
-    job['platform'] = platform
+    job['config'] = config.encode('ascii', 'ignore').decode('utf-8')
+    job['platform'] = platform.encode('ascii', 'ignore').decode('utf-8')
     return job
 
 
@@ -298,7 +311,7 @@ def analyzeSimilarJobs(list, alljobs, max_failures=3):
     bad_items = []
     # find the suite name, not platform, not chunk, but flavor is ok
     suites = ['talos', 'raptor', 'awsy',
-              'mochitest', 'web-platform-tests', 'reftest',  # subsuites
+              'mochitest', 'web-platform-tests', 'reftest', 'browser-screenshots',  # subsuites
               'crashtest',
               'xpcshell',
               'firefox-ui',
@@ -312,7 +325,7 @@ def analyzeSimilarJobs(list, alljobs, max_failures=3):
         try:
             suite = [x for x in suites if x in item[4]][0]
         except:
-            print "missing suite: %s" % item[4]
+            print("missing suite: %s" % item[4])
             continue
 
         if suite in ['mochitest', 'web-platform-tests', 'reftest']:
@@ -364,7 +377,7 @@ def analyzeSimilarFailures(list, max_failures=3):
         if item[3] not in pmap[key]:
             pmap[key].append(item[3])
 
-        if len(pmap[key]) >= max_failures:
+        if len(pmap[key]) > max_failures:
             bad_items.extend([x for x in pmap[key] if x not in bad_items])
     return bad_items
 
@@ -507,10 +520,12 @@ def analyzeJobs(jobs, alljobs):
                       50]                    # confidence
 
             # android and wpt have unicode characters embedded in many cases
+            if isinstance(line, dict):
+                print(line) 
             line = line.encode('ascii', 'ignore')
-            testname = line.strip()
+            testname = str(line.strip())
             # format: "TEST-UNEXPECTED-FAIL | <name> | <msg>"
-            parts = line.split('|')
+            parts = line.split(b'|')
             if len(parts) == 3:
                 testname = cleanTest(parts[1].strip())
                 if parts[2].strip() in ignore_leaks:
@@ -663,20 +678,20 @@ def analyzePush(client, branch, push, verbose=False):
         if len(regressed_jobs) / len(bad_classified) < 2: bad_push = True
 
     if verbose and bad_push:
-        print push['revision']
-        print "  failed: %s" % len(failed_jobs)
-        print "  oranges: %s" % len(oranges)
-        print "  missed: %s" % len(missed)
+        print(push['revision'].encode('ascii', 'ignore'))
+        print("  failed: %s" % len(failed_jobs))
+        print("  oranges: %s" % len(oranges))
+        print("  missed: %s" % len(missed))
         for job in missed:
             tests = ["%s" % (x[2]) for x in oranges if job['id'] == x[3]]
-            print "    %s (%s)" % (job['job_type_name'], tests)
-        print "  known regressions: %s" % len(regressed_jobs)
+            print("    %s (%s)" % (job['job_type_name'].encode('ascii', 'ignore'), tests))
+        print("  known regressions: %s" % len(regressed_jobs))
 
-        print "  BAD CLASSIFY: %s" % len(bad_classified)
+        print("  BAD CLASSIFY: %s" % len(bad_classified))
         for job in bad_classified:
             tests = ["%s" % (x[2]) for x in oranges if job['id'] == x[3]]
-            print "    %s (%s)" % (job['job_type_name'], tests)
-        print ""
+            print("    %s (%s)" % (job['job_type_name'].encode('ascii', 'ignore'), tests))
+        print("")
 
     return {'regressed_push': int(len(regressed_jobs) > 0),
             'failed': len(failed_jobs),
@@ -703,7 +718,7 @@ def getPushes(client, branch, date):
                                    count=1000,
                                    push_timestamp__gte=start_date,
                                    push_timestamp__lte=end_date)
-        with open(filename, 'wb') as f:
+        with open(filename, 'w') as f:
             json.dump(pushes, f)
 
     return pushes
@@ -712,20 +727,22 @@ def getPushes(client, branch, date):
 client = TreeherderClient(server_url='https://treeherder.mozilla.org')
 branch = 'autoland'
 
-print "date, bad, known, missed, failed jobs"
+print("date, bad, known, missed, failed jobs")
 bad = 0
 missed = 0
 failed = 0
 regressed = 0
 dates = []
-for iter in range(24,32):
-    dates.append('2018-12-%s' % iter)
 for iter in range(1, 32):
     if iter < 10:
         iter = "0%s" % iter
     dates.append('2019-01-%s' % iter)
+for iter in range(1, 29):
+    if iter < 10:
+        iter = "0%s" % iter
+    dates.append('2019-02-%s' % iter)
 
-dates = ['2019-01-04', '2019-01-10', '2019-01-22', '2019-01-29']
+#dates = ['2019-01-04', '2019-01-10', '2019-01-22', '2019-01-29']
 
 for date in dates:
     pushes = getPushes(client, branch, date)
@@ -754,15 +771,15 @@ for date in dates:
 #                                                      len(pushes),
 #                                                      total['failed'])
 
-    print "%s, %s, %s, %s, %s" % (date,
+    print("%s, %s, %s, %s, %s" % (date,
                                   total['bad_push'],
                                   total['regressed_jobs'],
                                   total['missed_jobs'],
-                                  total['failed'])
+                                  total['failed']))
 
     bad += total['bad_push']
     regressed += total['regressed_jobs']
     missed += total['missed_jobs']
     failed += total['failed']
-print "          , %s, %s, %s" % (bad, missed, failed)
+print("          , %s, %s, %s" % (bad, missed, failed))
 

@@ -174,7 +174,7 @@ def query_activedata(config, platforms=None, end_timestamp=None):
         retVal.append([test, config[0], count, runtime])
 
     if len(retVal) == 0:
-        print(query)
+        print(query.encode('ascii', 'ignore'))
 
     return retVal
 
@@ -184,6 +184,7 @@ def write_timecounts(data, config, platform, outdir=here):
         platform = "%s-%s" % (platform, config)
 
     outfilename = os.path.join(outdir, "%s.failures.json" % (platform))
+    outfilename = outfilename.encode('ascii', 'ignore')
     if not os.path.exists(outdir):
         os.makedirs(outdir)
 
@@ -215,11 +216,10 @@ def cli(args=sys.argv[1:]):
                                          int(parts[2]))
         dates = [args.to_date]
     else:
-        for iter in range(23,32):
-            dates.append(datetime.datetime(2018, 12, iter))
-        for iter in range(1,32):
+        dates = []
+        for iter in range(19,32):
             dates.append(datetime.datetime(2019, 1, iter))
-        for iter in range(1,20):
+        for iter in range(1,29):
             dates.append(datetime.datetime(2019, 2, iter))
 
 
@@ -227,7 +227,7 @@ def cli(args=sys.argv[1:]):
 
     import shutil
     for date in dates:
-        print "generated data for date: %s" % date
+        print("generated data for date: %s" % date)
 
         if os.path.exists(cachedir):
             shutil.rmtree(cachedir)
@@ -251,8 +251,8 @@ def cli(args=sys.argv[1:]):
 
         failures = {}
         for filename in filenames:
-            platform = filename.split(os.sep)[1]
-            platform = platform.split('.')[0]
+            head, tail = os.path.split(filename)
+            platform = str(tail.split(b'.')[0])
             with open(filename, 'r') as f:
                 data = json.load(f)
                 for item in data:
