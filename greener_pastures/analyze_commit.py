@@ -114,7 +114,7 @@ def loadFailureLines(thclient, jobs, branch, revision, force=False):
         # get bug_suggestions, not available via client, so doing a raw query
         try:
             failures = thclient._get_json('jobs/%s/bug_suggestions' % job['id'],
-                                          project='autoland')
+                                          project='%s' % branch)
         except:
             print("FAILURE retrieving bug_suggestions: %s" % job['id'])
             job['failure_lines'] = ['']
@@ -133,9 +133,9 @@ def loadFailureLines(thclient, jobs, branch, revision, force=False):
 
 def loadAllJobs(thclient, branch, revision):
     filename = cacheName("%s-%s.json" % (branch, revision))
-    if os.path.exists(filename):
-        with open(filename, 'r') as f:
-            return json.load(f)
+#    if os.path.exists(filename):
+#        with open(filename, 'r') as f:
+#            return json.load(f)
 
     pushes = thclient.get_pushes(branch, revision=revision)
     retVal = []
@@ -195,7 +195,7 @@ def cleanConfigs(job):
     platform = job['platform']
     config = job['platform_option']
 
-    if config == 'pgo':
+    if config == 'pgo' or config == 'shippable':
         config = 'opt'
 
     if platform.startswith('macosx64'):
@@ -392,7 +392,7 @@ def filterLowestCommonClassification(results):
     """
 
     # classification priority
-    high = ['newfailure', 'unknown']
+    high = ['newfailure', 'previousregression', 'unknown']
 
     uniqueids = []
     for id in [x[3] for x in results]:
@@ -415,7 +415,7 @@ def filterLowestCommonClassification(results):
     return results
 
 
-def analyzeJobs(jobs, alljobs):
+def analyzeJobs(jobs, alljobs, ignore, verbose=False):
     '''
         Currently sheriffs look at a task and annotate the first test failure
         99% of the time ignoring the rest of the failures.  Here we analyze
@@ -443,9 +443,10 @@ def analyzeJobs(jobs, alljobs):
           * infra (1)
           * leak (2)
           * intermittent (3)
-          * newfailure (4)
-          * previousregression (5)
-          * regression (6)
+          * crash (4)
+          * newfailure (5)
+          * previousregression (6)
+          * regression (7)
 
         Confidence will be based on factors such as repeated runs, a known
         regression from the past, and frequency across platform and the entire
@@ -466,50 +467,19 @@ def analyzeJobs(jobs, alljobs):
         accurate information related to both per test failure and per job
         failure.
     '''
+
     infra = ['raptor-main TEST-UNEXPECTED-FAIL: no raptor test results were found',
              'Uncaught exception: Traceback (most recent call last):']
     ignore_leaks = ['tab missing output line for total leaks!',
                     'plugin missing output line for total leaks!',
                     'process() called before end of test suite']
 
-    ignore = ['[taskcluster:error]',
-              'Return code:',
-              'ABORT',
-              'Received SIGINT (control-C), so stopped run',
-              'Uncaught exception:',
-              '/builds/worker/workspace/mozharness/mozharness/base/script.py',
-              'self.run_action',
-              'self._possibly_run_method',
-              'Automation Error:',
-              'The mochitest suite:',
-              'TBPL FAILURE',
-              'Assertion failure:',
-              'AsyncShutdown timeout',
-              'Force-terminating active process',
-              'InvalidArgumentException:',
-              'JavascriptException:',
-              'ChunkedEncodingError:',
-              'No suite end',
-              'Logged with data',
-              'No tests run',
-              'HTTP Error 500',
-              'runjunit.py',
-              'runtests.py',
-              'No such file or directory',
-              'not a valid structured log message',
-              'timed out loading test page:',  # raptor
-              'Error copying results',
-              'exception output:',
-              'zombiecheck',
-              'shutil error:',
-              'mozdevice.adb.ADBTimeoutError:',
-              'ValueError: invalid literal for int() with base 10:',
-              'timed out after']
-
     results = []
+    reasons = {}
     for job in jobs:
         job_results = []
 
+        last_testname = ''
         for line in job['failure_lines'][:5]:
             result = [job['platform'],
                       job['config'],
@@ -532,20 +502,38 @@ def analyzeJobs(jobs, alljobs):
                     result[5] = 'leak'
                 if parts[2].strip() in ignore:
                     result[5] = 'infra'
+                last_testname = testname
             elif len(parts) == 2:
                 # not a formatted error
+                if verbose:
+                    print("!!! parts == 2: %s" % line)
                 continue
+            elif last_testname != '':
+                # ignore non test failure lines after a test failure line
+                if verbose:
+                    print("!!! last test_name: %s" % line)
+                break
 
             if [x for x in ignore if len(testname.split(x)) > 1]:
+                if verbose:
+                    print("ignore list: %s" % ignore)
+                    print("!!! ignore: %s" % line)
+                    print("!!! ignore: %s" % testname.split(x))
+                    print("!!! length: %s" % [x for x in ignore if len(testname.split(x)) > 1])
+                    print("")
                 break
             if not testname or testname == '':
+                if verbose:
+                    print("!!! no testname %s" % line)
                 continue
 
             result[2] = testname
 
             if parts[0].strip() == 'PROCESS-CRASH':
-                result[5] = 'intermittent'
+                result[5] = 'crash'
                 job_results.append(result)
+                if verbose:
+                    print("!!! process crash: %s" % line)
                 break
             elif (testname in infra):  # and not len(job_results) == 0:
                 # TODO: figure out a solution for timeouts/hang on start
@@ -572,7 +560,7 @@ def analyzeJobs(jobs, alljobs):
             # TODO: if there is >1 failure for platforms/config, increase pct
             # TODO: if >1 failures in the same dir or platform, increase pct
 
-            # TODO: how many unique regression in win7*reftest*
+            # TODO: how many unique regression in win7*reftest* = Jan 20 -> Mar 3 (3)
             # Marking all win7 reftest failures as int, too many font issues
             if job['platform'] == 'windows7-32' and \
                 ('opt-reftest' in job['job_type_name'] or
@@ -581,6 +569,9 @@ def analyzeJobs(jobs, alljobs):
                 result[6] = 50
 
             job_results.append(result)
+            reasons[result[2]] = result[5]
+            if verbose:
+                print(" - %s\n - %s" % (result[2], reasons[result[2]]))
 
         # if job has no results (i.e. all infra), mark as intermittent
         if len(job_results) == 0:
@@ -605,19 +596,25 @@ def analyzeJobs(jobs, alljobs):
         max_failures = 1
 
     unknown_ids = []
-    for type in ['leak', 'infra']:
-        jids = [x for x in results if x[5] == type]
+    for type in ['leak', 'infra', 'crash']:
+        jids = [x for x in results if x[5].startswith(type)]
         rv = analyzeGreyZone(jids, max_failures=max_failures)
+#        print("grey zone found: %s" % len(rv))
         unknown_ids.extend([x for x in rv if x not in unknown_ids])
 
     rv = analyzeFrequentFailures(results, max_failures=max_failures)
+#    print("frequent failures found: %s" % len(rv))
     unknown_ids.extend([x for x in rv if x not in unknown_ids])
 
     rv = analyzeSimilarJobs(results, alljobs, max_failures=max_failures)
+#    print("similar jobs found: %s" % len(rv))
     unknown_ids.extend([x for x in rv if x not in unknown_ids])
 
     rv = analyzeSimilarFailures(results, max_failures=max_failures)
+#    print("similar failures found: %s" % len(rv))
     unknown_ids.extend([x for x in rv if x not in unknown_ids])
+
+    # TODO: add check for multiple crashes on the same config
 
     temp = []
     for item in results:
@@ -625,30 +622,30 @@ def analyzeJobs(jobs, alljobs):
             item[5] = 'unknown'  # TODO: is this right?  retriggers?
         if item not in temp:
             temp.append(item)
-    return temp
+
+    temp_unknown = []
+    for item in unknown_ids:
+        if item not in temp_unknown:
+#            for x in results:
+#                if x[3] == item:
+#                    print(x)
+            temp_unknown.append(item)
+#    print("total unknown: %s\n" % len(temp_unknown))
+
+    return temp, reasons, temp_unknown
 
 
-def analyzePush(client, branch, push, verbose=False):
+def analyzePush(client, branch, push, ignore_list, verbose=False):
     jobs = loadAllJobs(client, branch, push['revision'])
 
     # find failed jobs, not tier-3, not blue(retry), just testfailed
     failed_jobs = filterFailedJobs(jobs)
-#    failed_jobs = [j for j in failed_jobs if j['tier'] != 3]
     failed_jobs = [j for j in failed_jobs if j['tier'] == 1]
     failed_jobs = [j for j in failed_jobs if j['result'] == 'testfailed']
 
-    # temporarily filter out test-verify/builds
-    filtered = []
-    for job in failed_jobs:
-        if job['job_type_name'].startswith('build') or \
-           job['job_type_name'].startswith('repackage') or \
-           job['job_type_name'].startswith('hazard') or \
-           job['job_type_name'].startswith('spidermonkey') or \
-           job['job_type_name'].startswith('valgrind') or \
-           len(job['job_type_name'].split('test-verify')) > 1:
-            continue
-        filtered.append(job)
-    failed_jobs = filtered
+    # temporarily filter out test-verify
+    failed_jobs = [j for j in failed_jobs if len(j['job_type_name'].split('test-verify')) == 1]
+
     failed_jobs = loadFailureLines(client,
                                    failed_jobs,
                                    branch,
@@ -662,9 +659,29 @@ def analyzePush(client, branch, push, verbose=False):
             regressed_ids.append(x['id'])
     regressed_ids = [x['id'] for x in regressed_jobs]
 
-    oranges = analyzeJobs(failed_jobs, jobs)
-    orange_ids = [x[3] for x in oranges
-                  if x[5] in ['infra', 'leak', 'intermittent']]
+    v = False
+
+    '''
+    if push['revision'] == 'b6e4c464290cd84040aed2e42f0c4064d71ef612,':
+        v = False
+    else:
+        return {'regressed_push': 0,
+                'failed': 0,
+                'oranges': 0,
+                'new_failures': 0,
+                'previousregressions': 0,
+                'regressed_jobs': 0,
+                'missed_jobs': 0,
+                'missed_push': 0,
+                'bad_jobs': 0,
+                'bad_push': 0}, []
+    '''
+
+    oranges, reasons, unknown_ids = analyzeJobs(failed_jobs, jobs, ignore_list, v)
+    orange_ids = []
+    for x in oranges:
+        if x[5] in ['infra', 'leak', 'intermittent'] and x[3] not in orange_ids:
+            orange_ids.append(x[3])
 
     # TODO: what about no data, typically in: talos/raptor/android
 
@@ -677,14 +694,42 @@ def analyzePush(client, branch, push, verbose=False):
     if len(bad_classified):
         if len(regressed_jobs) / len(bad_classified) < 2: bad_push = True
 
-    if verbose and bad_push:
+    types = []
+    for x in reasons:
+        if reasons[x] not in types:
+            types.append(reasons[x])
+    output = []
+    printed = []
+    type_count = {'newfailure': 0, 'previousregression': 0, 'unknown': 0, 'twopass_filters': unknown_ids}
+    job_found = []
+    for type in types:
+        type_count[type] = 0
+        output.append("    %s" % type)
+        for job in missed:
+            if job['id'] in job_found:
+                continue
+            test = ["%s" % (x[2]) for x in oranges if job['id'] == x[3]][0]
+            if test in reasons and reasons[test] == type and test not in printed:
+                printed.append(test)
+                job_found.append(job['id'])
+                type_count[type] += 1
+                output.append("      %s (%s)" % (job['job_type_name'].encode('ascii', 'ignore'), test))
+    output.append("    unknown:")
+    for job in missed:
+        if job['id'] in job_found:
+            continue
+        type_count['unknown'] += 1
+        test = ["%s" % (x[2]) for x in oranges if job['id'] == x[3]][0]
+        output.append("      %s (%s)" % (job['job_type_name'].encode('ascii', 'ignore'), test))
+
+
+#    if verbose and bad_push:
+    if verbose:
         print(push['revision'].encode('ascii', 'ignore'))
         print("  failed: %s" % len(failed_jobs))
         print("  oranges: %s" % len(oranges))
         print("  missed: %s" % len(missed))
-        for job in missed:
-            tests = ["%s" % (x[2]) for x in oranges if job['id'] == x[3]]
-            print("    %s (%s)" % (job['job_type_name'].encode('ascii', 'ignore'), tests))
+        print('\n'.join(output))
         print("  known regressions: %s" % len(regressed_jobs))
 
         print("  BAD CLASSIFY: %s" % len(bad_classified))
@@ -695,12 +740,16 @@ def analyzePush(client, branch, push, verbose=False):
 
     return {'regressed_push': int(len(regressed_jobs) > 0),
             'failed': len(failed_jobs),
-            'oranges': len(oranges),
+            'oranges': len(orange_ids),
+            'new_failures': type_count['newfailure'],
+            'previousregressions': type_count['previousregression'],
             'regressed_jobs': len(regressed_jobs),
+            'unknown': type_count['unknown'],
+            'twopass_filter': len(type_count['twopass_filters']),
             'missed_jobs': len(missed),
             'missed_push': int(len(missed) > 0),
             'bad_jobs': len(bad_classified),
-            'bad_push': int(bad_push)}
+            'bad_push': int(bad_push)}, bad_classified
 
 
 def getPushes(client, branch, date):
@@ -726,60 +775,110 @@ def getPushes(client, branch, date):
 
 client = TreeherderClient(server_url='https://treeherder.mozilla.org')
 branch = 'autoland'
+#branch = 'try'
 
-print("date, bad, known, missed, failed jobs")
+print("date, bad, known regressions, newfailures, previous regressions, other, 2nd pass removed, missed, found oranges, failed jobs")
 bad = 0
 missed = 0
 failed = 0
 regressed = 0
 dates = []
-for iter in range(1, 32):
+for iter in range(2, 32):
     if iter < 10:
         iter = "0%s" % iter
-    dates.append('2019-01-%s' % iter)
+#    dates.append('2019-01-%s' % iter)
 for iter in range(1, 29):
     if iter < 10:
         iter = "0%s" % iter
-    dates.append('2019-02-%s' % iter)
+#    dates.append('2019-02-%s' % iter)
+for iter in range(26, 32):
+    if iter < 10:
+        iter = "0%s" % iter
+    dates.append('2019-03-%s' % iter)
 
-#dates = ['2019-01-04', '2019-01-10', '2019-01-22', '2019-01-29']
+#dates = ['2019-03-26']
 
-for date in dates:
-    pushes = getPushes(client, branch, date)
-    loadFailures(date)
-    loadFBCTests(client, date)
+ignore = ['[taskcluster:error]']
 
-    total = {'regressed_push': 0,
-             'failed': 0,
-             'oranges': 0,
-             'regressed_jobs': 0,
-             'missed_jobs': 0,
-             'missed_push': 0,
-             'bad_jobs': 0,
-             'bad_push': 0}
+ignore_lines = {}
+ignore_misses = {}
+for ig in ignore:
+    ignore_list = [ig]
+    ignore_lines[ig] = []
+    ignore_misses[ig] = 0
+    for date in dates:
+        parts = date.split('-')
+        previous_date = "%s-%s-%02d" % (parts[0], parts[1], int(parts[2])-1)
+        if date == "2019-03-01":
+           previous_date = "2019-02-28"
+        if date == "2019-02-01":
+           previous_date = "2019-01-31"
+        if date == "2019-01-01":
+           previous_date = "2018-12-31"
+        pushes = getPushes(client, branch, date)
+        loadFailures(previous_date)
+        loadFBCTests(client, previous_date)
 
-    for push in pushes:
-        results = analyzePush(client, branch, push, verbose=True)
-        for item in results.keys():
-            total[item] += results[item]
+        total = {'regressed_push': 0,
+                 'failed': 0,
+                 'oranges': 0,
+                 'new_failures': 0,
+                 'previousregressions': 0,
+                 'regressed_jobs': 0,
+                 'unknown': 0,
+                 'twopass_filter': 0,
+                 'missed_jobs': 0,
+                 'missed_push': 0,
+                 'bad_jobs': 0,
+                 'bad_push': 0}
 
-#    print "%s: %s (%s), %s (%s) - failed: %s (%s)" % (date,
-#                                                      total['bad_push'],
-#                                                      total['bad_jobs'],
-#                                                      total['missed_push'],
-#                                                      total['missed_jobs'],
-#                                                      len(pushes),
-#                                                      total['failed'])
+        for push in pushes:
+            if push['revision'] != 'b6e4c464290cd84040aed2e42f0c4064d71ef612':
+                continue
 
-    print("%s, %s, %s, %s, %s" % (date,
-                                  total['bad_push'],
-                                  total['regressed_jobs'],
-                                  total['missed_jobs'],
-                                  total['failed']))
+            results, fp = analyzePush(client, branch, push, ignore_list, verbose=True)
+            ignore_lines[ig].extend(fp)
+            for item in results.keys():
+                total[item] += results[item]
 
-    bad += total['bad_push']
-    regressed += total['regressed_jobs']
-    missed += total['missed_jobs']
-    failed += total['failed']
-print("          , %s, %s, %s" % (bad, missed, failed))
+            print("%s, 2pass: %s (%s), new: %s (%s), previous: %s (%s), found: %s (%s) = %s (%s)" % (push['revision'],
+                                                               total['twopass_filter'], results['twopass_filter'],
+                                                               total['new_failures'], results['new_failures'],
+                                                               total['previousregressions'],results['previousregressions'],
+                                                               total['oranges'],results['oranges'],
+                                                               (total['twopass_filter'] + total['new_failures'] + total['previousregressions'] + total['oranges']),
+                                                               (results['twopass_filter'] + results['new_failures'] + results['previousregressions'] + results['oranges'])))
+    #    print "%s: %s (%s), %s (%s) - failed: %s (%s)" % (date,
+    #                                                      total['bad_push'],
+    #                                                      total['bad_jobs'],
+    #                                                      total['missed_push'],
+    #                                                      total['missed_jobs'],
+    #                                                      len(pushes),
+    #                                                      total['failed'])
+
+        print("%s, %s, %s, %s, %s, %s, (%s), %s, %s, %s" % (date,
+                                      total['bad_push'],
+                                      total['regressed_jobs'],
+                                      total['new_failures'],
+                                      total['previousregressions'],
+                                      total['unknown'],
+                                      total['twopass_filter'],
+                                      total['missed_jobs'],
+                                      total['oranges'],
+                                      total['failed']))
+
+        bad += total['bad_push']
+        regressed += total['regressed_jobs']
+        missed += total['missed_jobs']
+        failed += total['failed']
+        ignore_misses[ig] += total['missed_jobs']
+
+    print("")
+    print("          , bad, missed, total failed jobs")
+    print("          , %s, %s, %s" % (bad, missed, failed))
+
+for line in ignore_lines:
+    print("%s: %s, %s" % (line, len(ignore_lines[line]), ignore_misses[line]))
+#    for item in ignore_lines[line]:
+#        print item
 

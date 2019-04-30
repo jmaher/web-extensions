@@ -158,7 +158,7 @@ def query_activedata(config, platforms=None, end_timestamp=None):
         if not config or config is None or config == '':
             config = ['opt']
 
-        if 'pgo' in config or 'asan' in config:
+        if 'pgo' in config or 'asan' in config or 'shippable' in config:
             if 'opt' in config:
                 config = config.remove('opt')
         elif 'qr' in config:
@@ -217,10 +217,12 @@ def cli(args=sys.argv[1:]):
         dates = [args.to_date]
     else:
         dates = []
-        for iter in range(19,32):
-            dates.append(datetime.datetime(2019, 1, iter))
-        for iter in range(1,29):
-            dates.append(datetime.datetime(2019, 2, iter))
+#        for iter in range(19,32):
+#            dates.append(datetime.datetime(2019, 1, iter))
+#        for iter in range(1,29):
+#            dates.append(datetime.datetime(2019, 2, iter))
+        for iter in range(30,32):
+            dates.append(datetime.datetime(2019, 3, iter))
 
 
     cachedir = args.outdir
